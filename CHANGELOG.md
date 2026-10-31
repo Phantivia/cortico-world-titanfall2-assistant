@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- 默认启动参数加 `-noborder`:游戏设成窗口模式时就是无边框窗口，桌宠能显示在游戏上面(独占全屏会盖住它)。
+
 ## 0.2.1
 
 - 默认启动参数加 `+sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1`:在桌宠里打字时游戏不再暂停，BT 照常出手和说话。

@@ -45,8 +45,9 @@ Owner: `src/definition.ts`
 5. 用 `NorthstarLauncher.exe -allowlocalhttp <launchArgs> +cortico_tf2_port <port>` 启动游戏，窗口出现后恢复并切到前台。游戏停在主菜单，玩家选「继续」或「任务选择」进入战役。
 
 几点说明：
-- `launchArgs` 默认 `-noOriginStartup -novid +sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1`:
+- `launchArgs` 默认 `-noOriginStartup -novid -noborder +sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1`:
   - Northstar 默认去找 Origin,本机只有 EA App 时会报「failed reading Origin path」,所以加 `-noOriginStartup`。
+  - 游戏的独占全屏会盖住桌宠这类置顶窗口。`-noborder` 让窗口模式不带边框，游戏设置里显示模式选窗口、分辨率设成屏幕分辨率，就是铺满屏幕的无边框窗口，桌宠显示在游戏上面。只改 `videoconfig.txt` 的 `setting.nowindowborder` 不会去掉边框。混合显卡笔记本上独占全屏的分辨率列表可能来自外接屏，窗口模式不受这个限制。
   - 单人战役默认在游戏窗口失去焦点时暂停、降帧、静音。后三项让玩家在桌宠里打字时游戏照常运行，BT 仍能出手和说话;玩家离开窗口时游戏也不会停。`sound_without_focus` 是存进游戏设置的项。
 - EA App 没登录完游戏就会弹出 `#ORIGIN_LOGGED_OUT`,点确定后退出;游戏在启动 90 秒内没进关卡就退出时，面板写明这个原因。
 - BT 语音不随 World 启动：一键开始或有关卡连上时才启动，World 开着不玩游戏时不占显存。

@@ -72,6 +72,8 @@ export interface EnemyFrame {
 /** A pilot helmet collectible, a BT loadout pickup, or a titan battery on the ground. */
 export interface PoiFrame {
   kind: 'helmet' | 'loadout' | 'battery';
+  /** Encoded entity handle; positions alone move with the level on moving ships. */
+  id: number;
   pos: Vec3;
   /** The titan weapon of a loadout pickup. */
   weapon?: string;
@@ -122,8 +124,8 @@ export interface ServerPost {
   bt?: TitanFrame;
   enemies?: EnemyFrame[];
   objective?: ObjectiveFrame;
-  /** The level's current start point: the section the campaign reached, e.g. "BT_Intro". */
-  section?: string;
+  /** Index of the level's current start point: the section the campaign reached. Its names give away what is coming, so only the index travels. */
+  section?: number;
   /** Seconds until the World-cooled support actions are ready again. */
   ready?: Partial<Record<CommandOp, number>>;
   pois?: PoiFrame[];

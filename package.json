@@ -5,6 +5,14 @@
   "description": "Cortico World for the Titanfall 2 campaign: Coo rides along as BT with live intel on the pilot, BT and hostiles, fires BT's missiles, smoke and sonar, and speaks in BT's voice and subtitles, through a Northstar mod and a sidecar.",
   "author": "Phantivia",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Phantivia/cortico-world-titanfall2-assistant.git"
+  },
+  "homepage": "https://github.com/Phantivia/cortico-world-titanfall2-assistant#readme",
+  "bugs": {
+    "url": "https://github.com/Phantivia/cortico-world-titanfall2-assistant/issues"
+  },
   "keywords": [
     "cortico-world",
     "cortico",

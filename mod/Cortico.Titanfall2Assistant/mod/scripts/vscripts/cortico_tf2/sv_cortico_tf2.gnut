@@ -205,7 +205,7 @@ void function FillState( table body, entity player )
 	try { if ( IsValid( bt ) ) body.bt <- TitanState( player, bt ) } catch ( err2 ) { Report( "bt", err2 ) }
 	try { body.enemies <- ScanEnemies( player, bt ) } catch ( err3 ) { Report( "enemies", err3 ) }
 	try { body.objective <- ObjectiveState() } catch ( err4 ) { Report( "objective", err4 ) }
-	try { body.section <- GetCurrentStartPoint() } catch ( err5 ) { Report( "section", err5 ) }
+	try { body.section <- GetCurrentStartPointIndex() } catch ( err5 ) { Report( "section", err5 ) }
 	body.ready <- ReadyState()
 	try { body.pois <- PoiState() } catch ( err6 ) { Report( "pois", err6 ) }
 	try { body.threats <- ThreatState( player ) } catch ( err7 ) { Report( "threats", err7 ) }
@@ -352,17 +352,17 @@ array function PoiState()
 	foreach ( entity ent in file.batteries )
 	{
 		if ( IsValid( ent ) && !IsValid( ent.GetParent() ) )
-			list.append( { kind = "battery", pos = Vec( ent.GetOrigin() ) } )
+			list.append( { kind = "battery", id = ent.GetEncodedEHandle(), pos = Vec( ent.GetOrigin() ) } )
 	}
 	foreach ( entity ent in file.helmets )
 	{
 		if ( IsValid( ent ) )
-			list.append( { kind = "helmet", pos = Vec( ent.GetOrigin() ) } )
+			list.append( { kind = "helmet", id = ent.GetEncodedEHandle(), pos = Vec( ent.GetOrigin() ) } )
 	}
 	foreach ( int i, entity ent in file.loadoutPickups )
 	{
 		if ( IsValid( ent ) )
-			list.append( { kind = "loadout", weapon = file.loadoutPickupWeapons[ i ], pos = Vec( ent.GetOrigin() ) } )
+			list.append( { kind = "loadout", id = ent.GetEncodedEHandle(), weapon = file.loadoutPickupWeapons[ i ], pos = Vec( ent.GetOrigin() ) } )
 	}
 	return list
 }

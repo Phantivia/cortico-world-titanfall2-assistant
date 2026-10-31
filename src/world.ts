@@ -23,7 +23,7 @@ import { TITANFALL2_ID, titanfall2ConfigGroups, type Titanfall2ConfigSection } f
 import type { CaptureResult, ChildToMain, EngineNotice, EngineRequest, Frame } from './engine-ipc.ts';
 import { checkGame, findGameDirs, installMod, launchGame, runningGame, type GameCheck } from './game.ts';
 import {
-  Labels, btLine, className, enemiesBlock, enemyText, weaponName as weaponNameOf, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
+  Labels, btLine, className, countText, enemiesBlock, enemyText, weaponName as weaponNameOf, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
   type Lookup, type SeenEnemy,
 } from './intel.ts';
 import { Player } from './player.ts';
@@ -49,6 +49,10 @@ const COMBAT_NEAR_M = 40;
 const PULSE_RADIUS_UNITS = 1250;
 /** A battery this close is worth mentioning while BT is below half health. */
 const BATTERY_NEAR_M = 40;
+/** An enemy titan this close interrupts; farther ones wait for the next batch. */
+const BIG_NEAR_M = 120;
+/** A doomed enemy titan this close is worth waking up for even when allies did it. */
+const DOOMED_NEAR_M = 100;
 const IMAGE_MIME = 'image/jpeg';
 const JPEG_QUALITY = 80;
 /** Lines kept for one story event; older ones are dropped when nothing delivers them. */
@@ -364,9 +368,9 @@ export class Titanfall2World implements World {
       void this.call({ op: 'localize', tokens }).catch(() => undefined);
     }
     if (prev && prev.map === frame.map) {
-      if (frame.section && prev.section && frame.section !== prev.section) {
+      if (frame.section !== undefined && prev.section !== undefined && frame.section > prev.section) {
         this.frameDue = true;
-        this.emit('titanfall2.story', `剧情推进到这一关的「${frame.section}」段。`, 'piggyback');
+        this.emit('titanfall2.story', `剧情推进到这一关的第 ${frame.section + 1} 段。`, 'piggyback');
       }
       this.edgeAlerts(prev, frame);
     }
@@ -476,12 +480,17 @@ export class Titanfall2World implements World {
   private edgeAlerts(prev: Frame, cur: Frame): void {
     const p = cur.player;
     const list = this.seen(cur);
-    for (const s of list) {
-      const big = s.e.cls === 'npc_titan' || s.e.cls === 'npc_super_spectre';
-      if (!big || this.seenBig.has(s.e.id)) continue;
-      this.seenBig.add(s.e.id);
-      const what = s.e.boss ? `Boss 泰坦 ${s.name}` : s.e.cls === 'npc_titan' ? `敌方泰坦 ${s.name}` : `死神`;
-      this.emit('titanfall2.alert', `${what}出现:${enemyText(s)}。`, s.e.cls === 'npc_titan' ? 'flush' : 'debounce');
+    // titans and reapers that showed up in this frame go out as one alert; only a boss or a titan
+    // within BIG_NEAR_M preempts, a far-off battle waits for the next batch
+    const fresh = list.filter((s) => (s.e.cls === 'npc_titan' || s.e.cls === 'npc_super_spectre') && !this.seenBig.has(s.e.id));
+    if (fresh.length) {
+      for (const s of fresh) this.seenBig.add(s.e.id);
+      const what = (s: SeenEnemy): string => (s.e.boss ? `Boss 泰坦 ${s.name}` : s.e.cls === 'npc_titan' ? `敌方泰坦 ${s.name}` : '死神');
+      const urgent = fresh.some((s) => s.e.boss || (s.e.cls === 'npc_titan' && s.rel.meters <= BIG_NEAR_M));
+      const text = fresh.length === 1
+        ? `${what(fresh[0])}出现:${enemyText(fresh[0])}。`
+        : `出现 ${fresh.length} 个大型敌人(${countText(fresh)}):\n${fresh.slice(0, 6).map((s) => `- ${enemyText(s)}`).join('\n')}`;
+      this.emit('titanfall2.alert', text, urgent ? 'flush' : 'debounce');
     }
 
     if (p && prev.player && p.alive && !p.titan) {
@@ -509,7 +518,7 @@ export class Titanfall2World implements World {
     if (p && near > 0) {
       for (const poi of cur.pois ?? []) {
         if (poi.kind !== 'helmet') continue;
-        const key = poi.pos.map((v) => Math.round(v)).join(',');
+        const key = String(poi.id);
         if (this.helmetsAnnounced.has(key)) continue;
         const r = relative(p.pos, p.yaw, poi.pos);
         if (r.meters > near) continue;
@@ -574,7 +583,13 @@ export class Titanfall2World implements World {
         return this.emit('titanfall2.alert', `BT 进入濒死状态(${who(e.by)})。`, 'flush');
       case 'titan_doomed': {
         const label = this.labels.label(e.id, Date.now());
-        return this.emit('titanfall2.combat', `敌方${e.boss ? ` Boss ${e.boss}` : '泰坦'} ${label} 进入濒死状态(${who(e.by)}),可以处决。`, 'debounce');
+        const p = this.frame?.player;
+        const enemy = this.frame?.enemies?.find((x) => x.id === e.id);
+        const rel = p && enemy ? relative(p.pos, p.yaw, enemy.pos) : null;
+        const ours = e.by === 'pilot' || e.by === 'bt';
+        const where = rel ? `,在铁驭 ${whereText(rel)}` : '';
+        const trigger: TriggerMode = ours || e.boss || (rel && rel.meters <= DOOMED_NEAR_M) ? 'debounce' : 'piggyback';
+        return this.emit('titanfall2.combat', `敌方${e.boss ? ` Boss ${e.boss}` : '泰坦'} ${label} 进入濒死状态(${who(e.by)})${where},靠近可以处决。`, trigger);
       }
       case 'embark':
         return this.emit('titanfall2.combat', '铁驭登上了 BT。', 'debounce');
@@ -600,7 +615,7 @@ export class Titanfall2World implements World {
       const by = k.by === 'bt' || (k.by === 'pilot' && titanWeapon) ? 'BT' : k.by === 'pilot' ? '铁驭' : '其他';
       groups.set(`${name}(${by})`, (groups.get(`${name}(${by})`) ?? 0) + 1);
     }
-    this.emit('titanfall2.combat', `击杀:${[...groups].map(([k, n]) => `${k}×${n}`).join('、')}。`, kills.some((k) => k.boss || k.cls === 'npc_titan') ? 'debounce' : 'piggyback');
+    this.emit('titanfall2.combat', `击杀:${[...groups].map(([k, n]) => `${k}×${n}`).join('、')}。`, kills.some((k) => k.boss || (k.cls === 'npc_titan' && (k.by === 'pilot' || k.by === 'bt'))) ? 'debounce' : 'piggyback');
   }
 
   private tick(): void {

@@ -99,7 +99,7 @@ Owner: `src/definition.ts`
 - 画面每 `story.frameSec` 秒最多附一张，换关、换目标、进入新段落后的下一条剧情必附。
 - 模型不收图时不附。
 
-段落取自关卡的当前起始点(`GetCurrentStartPoint()`,如 `BT_Intro`),随检查点推进而变。
+段落是关卡当前起始点的序号(`GetCurrentStartPointIndex()`),随检查点推进而变。起始点的名字会透露接下来的剧情，所以只报序号。各关卡的起始点见 [docs/campaign.md](docs/campaign.md)。
 
 ## 画面
 

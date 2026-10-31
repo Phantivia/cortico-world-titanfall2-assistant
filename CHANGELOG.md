@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- 环境提示词最后一段按操作员给的原文：简短、直接、像战术电脑，称呼「铁驭」,积极主动协助;去掉逐条的口吻细则。
+
 ## 0.4.0
 
 - BT 语音新增 GPT-SoVITS 引擎并设为默认：NVIDIA 显卡用 V5 turbo,没有就用 CPU 跑 v2ProPlus;运行时与权重和 cortico-world-gpt-sovits-for-coopanion 共用，先从魔搭下载。VoxCPM2 保留，配置 `voice.engine` 切换。

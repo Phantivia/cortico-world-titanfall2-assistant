@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pages, SPEAKER, width, wrap } from '../src/speech.ts';
+import { pages, pageSeconds, SPEAKER, width, wrap } from '../src/speech.ts';
 import { decodeWav } from '../src/voice.ts';
 
 describe('subtitle wrapping', () => {
@@ -11,11 +11,17 @@ describe('subtitle wrapping', () => {
     expect(lines[0]).toBe('前方有敌人，');
   });
 
-  it('puts the speaker alone on a one-line first page and at most two lines on later pages', () => {
+  it('puts the speaker on the first line and at most two lines on a page', () => {
     const out = pages('a'.repeat(100), 20);
-    expect(out[0]).toHaveLength(1);
     expect(out[0][0].startsWith(SPEAKER)).toBe(true);
     for (const p of out) expect(p.length).toBeLessThanOrEqual(2);
+  });
+
+  it('shares one voiced line\'s length across its pages by width, so pages turn while the voice runs on', () => {
+    const list = [['一二三四'], ['五六']];
+    const secs = pageSeconds(list, 3000, 3);
+    expect(secs[0] / (secs[1] - 0.4)).toBeCloseTo(2);
+    expect(secs.reduce((a, b) => a + b, 0)).toBeCloseTo(3.4);
   });
 });
 

@@ -1,13 +1,12 @@
 /**
  * BT speaking: text → subtitle pages → (voice) → subtitle in the game while the audio plays.
  *
- * A line is split into pages of at most two subtitle lines; each page is synthesized while the
- * previous one plays, and its subtitle goes up when its audio starts. Without a voice the subtitle
- * stays for a reading time.
+ * The whole line is synthesized in one piece and played without gaps; its subtitle is split into pages of
+ * at most two lines that turn over in step with the audio. Without a voice each page stays for a reading time.
  */
 import type { Logger } from 'cortico/core/types.ts';
 import type { Titanfall2ConfigSection } from './config.ts';
-import type { Player } from './player.ts';
+import { liftOf, type Player } from './player.ts';
 import type { Pcm, VoiceEngine } from './voice.ts';
 
 export const SPEAKER = 'BT: ';
@@ -51,16 +50,23 @@ export function wrap(text: string, perLine: number): string[] {
   return lines;
 }
 
-/**
- * Subtitle pages: the first is one line, so its audio is short to synthesize and BT starts speaking
- * sooner; the rest hold PAGE_LINES lines and are synthesized while earlier pages play. The first line
- * carries the speaker.
- */
+/** Subtitle pages of at most PAGE_LINES lines; the first line carries the speaker. */
 export function pages(text: string, perLine: number): string[][] {
   const lines = wrap(`${SPEAKER}${text}`, perLine);
-  const out: string[][] = [lines.slice(0, 1)];
-  for (let i = 1; i < lines.length; i += PAGE_LINES) out.push(lines.slice(i, i + PAGE_LINES));
+  const out: string[][] = [];
+  for (let i = 0; i < lines.length; i += PAGE_LINES) out.push(lines.slice(i, i + PAGE_LINES));
   return out;
+}
+
+/**
+ * How long each page stays: with a voice, the audio's length shared by the pages' widths (the last page also
+ * keeps the tail), so the subtitle turns while one continuous voice reads on; without, a reading time per page.
+ */
+export function pageSeconds(list: string[][], durationMs: number | null, minSec: number): number[] {
+  const widths = list.map((page) => width(page.join('')));
+  if (durationMs === null) return widths.map((w) => Math.max(minSec, (w * READ_MS_PER_CHAR) / 1000));
+  const total = widths.reduce((a, b) => a + b, 0) || 1;
+  return widths.map((w, i) => (durationMs * (w / total) + (i === list.length - 1 ? TAIL_MS : 0)) / 1000);
 }
 
 export interface SubtitleSink {
@@ -99,43 +105,45 @@ export class Speech {
     const gen = this.gen;
     const { subtitle, voice } = this.opts.cfg();
     const list = pages(text, subtitle.charsPerLine);
-    const useVoice = voice.enabled && this.opts.voiceReady();
-    const synths = useVoice ? list.map((p) => this.synthLater(p)) : [];
+    // synthesis starts now, while an earlier line may still be playing
+    const synth = voice.enabled && this.opts.voiceReady() ? this.opts.voice.synth(text) : null;
+    synth?.catch(() => undefined);
     let firstDone!: (r: SayResult) => void;
     const first = new Promise<SayResult>((r) => (firstDone = r));
     this.tail = this.tail.then(async () => {
       let problem: string | null = null;
-      let voicedAny = false;
+      let audio: Pcm | null = null;
+      if (synth) {
+        try {
+          audio = await synth;
+        } catch (err) {
+          problem = `语音合成失败:${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+      if (gen !== this.gen) {
+        firstDone({ shown: false, voiced: false, problem: '被打断' });
+        return;
+      }
+      const secs = pageSeconds(list, audio?.durationMs ?? null, subtitle.minSec);
+      if (audio) {
+        await this.opts.player.write(audio.sampleRate, audio.pcm, liftOf(audio.pcm));
+        this.opts.player.flush();
+      }
       for (let i = 0; i < list.length; i++) {
         if (gen !== this.gen) break;
-        let audio: Pcm | null = null;
-        if (useVoice) {
-          try {
-            audio = await synths[i]();
-          } catch (err) {
-            problem = `语音合成失败:${err instanceof Error ? err.message : String(err)}`;
-          }
-        }
-        if (gen !== this.gen) break;
-        const sec = audio ? (audio.durationMs + TAIL_MS) / 1000 : Math.max(this.opts.cfg().subtitle.minSec, (width(list[i].join('')) * READ_MS_PER_CHAR) / 1000);
-        if (audio) {
-          await this.opts.player.write(audio.sampleRate, audio.pcm);
-          this.opts.player.flush();
-          voicedAny = true;
-        }
         let shown = true;
-        await this.opts.sink.show(list[i], sec).catch((err: unknown) => {
+        await this.opts.sink.show(list[i], secs[i]).catch((err: unknown) => {
           shown = false;
           problem = `字幕没送进游戏:${err instanceof Error ? err.message : String(err)}`;
         });
-        if (i === 0) firstDone({ shown, voiced: voicedAny, problem });
+        if (i === 0) firstDone({ shown, voiced: audio !== null, problem });
         await new Promise<void>((r) => {
-          const t = setTimeout(r, sec * 1000);
-          this.wake = () => { clearTimeout(t); r(); };
+          const timer = setTimeout(r, secs[i] * 1000);
+          this.wake = () => { clearTimeout(timer); r(); };
         });
         this.wake = null;
       }
-      firstDone({ shown: false, voiced: voicedAny, problem: problem ?? '被打断' });
+      firstDone({ shown: false, voiced: audio !== null, problem: problem ?? '被打断' });
     });
     return first;
   }
@@ -148,11 +156,4 @@ export class Speech {
     await this.opts.sink.hide().catch(() => undefined);
   }
 
-  /** Starts synthesis now; the returned function awaits it. */
-  private synthLater(page: string[]): () => Promise<Pcm> {
-    const text = page.join('').replace(SPEAKER, '');
-    const p = this.opts.voice.synth(text);
-    p.catch(() => undefined);
-    return () => p;
-  }
 }

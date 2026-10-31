@@ -12,11 +12,9 @@ import { OUTPUT_GAIN, TIER_MODEL, type ModelVersion, type Tier } from './sovits/
 import { RuntimeJob, WeightsJob } from './sovits/install.ts';
 import { SovitsServer } from './sovits/server.ts';
 import { synthesize } from './sovits/synth.ts';
-import { decodeWav, ensureSample, type Pcm, type SampleSource, type VoiceEngine, type VoicePhase } from './voice.ts';
+import { decodeWav, ensureSample, WARMUP_TEXT, type Pcm, type SampleSource, type VoiceEngine, type VoicePhase } from './voice.ts';
 
 const SYNTH_TIMEOUT_MS = 60_000;
-/** Synthesized once after the server starts, so the first real line does not wait for the models to load. */
-const WARMUP_TEXT = '铁驭。';
 
 export interface SovitsOptions extends SampleSource {
   runtimesRoot: string;

@@ -137,7 +137,7 @@ Owner: `src/definition.ts`
 
 截取方式：`src/sample.ts` 读 `general.mbnk`,找到这条台词在 `general_<语言>.mstr` 里的位置，拼出 Bink Audio,由 `src/binka.ts` 解码，存成部署数据目录下的 `titanfall2-bt-sample.wav`。样片不随包分发。两种引擎都用它作参考音频、`voice.sampleText` 作逐字稿;GPT-SoVITS 要求参考音频 3–10 秒。
 
-GPT-SoVITS 按 api_v2 的 `/tts` 流式请求，一次只发一句(它只有一条推理管线);服务起来后先合成一句短话预热。
+GPT-SoVITS 按 api_v2 的 `/tts` 流式请求，一次只发一句(它只有一条推理管线);两种引擎在语音启动时都先合成一句「铁驭，系统在线，随时待命。」预热(不播放)。
 
 要换样片，改 `voice.sampleAlias` 和 `voice.sampleText`,逐字稿要和音频一致。
 
@@ -147,10 +147,11 @@ GPT-SoVITS 按 api_v2 的 `/tts` 流式请求，一次只发一句(它只有一�
 - 繁中版游戏的中文字体只有繁体字，所以 `subtitle.traditional` 开着时字幕先转成繁体。
 
 字幕的节奏：
-- 一句话按 `subtitle.charsPerLine` 折行。第一页只放一行，合成快、开口早;之后两行一页，在前一页播放时合成。
+- 一句话整句合成、连着播完，不分段停顿。字幕按 `subtitle.charsPerLine` 折行、两行一页，每页的停留时间按字数分摊整句音频的时长，跟着声音翻页。
+- 播放时每句的峰值提到约 -1 dBFS(最多放大 6 倍),单声道复制到左右两个声道。
 - 每页在它的语音开始播放时上屏，停留到语音结束。
 - 语音没就绪时只出字幕。
-- `titanfall2_say` 在第一页出声时返回。Cortico 按顺序执行同一次回复里的工具调用，所以紧跟在它后面的调用(比如桌宠气泡)和 BT 开口同时发生。
+- `titanfall2_say` 在这句开始出声时返回。Cortico 按顺序执行同一次回复里的工具调用，所以紧跟在它后面的调用(比如桌宠气泡)和 BT 开口同时发生。
 - 游戏暂停或读图时字幕送不进去，声音照样播出;回执写明这句已经说出口，免得 Coo 重说。
 
 ## 主动程度与口吻

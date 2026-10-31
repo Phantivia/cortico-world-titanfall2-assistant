@@ -39,6 +39,28 @@ const FRAME_MS = 20;
 const KNEE = 24000;
 
 /** 乘增益;超过拐点的部分平滑压缩，不硬削顶。 */
+/** Mono PCM16 duplicated into interleaved stereo: a one-channel WASAPI stream only reaches the left speaker. */
+export function toStereo(pcm: Buffer): Buffer {
+  const out = Buffer.alloc(pcm.length * 2);
+  for (let i = 0; i + 1 < pcm.length; i += 2) {
+    const s = pcm.readInt16LE(i);
+    out.writeInt16LE(s, i * 2);
+    out.writeInt16LE(s, i * 2 + 2);
+  }
+  return out;
+}
+
+/** Peak a line is raised to, about -1 dBFS, and the most it is raised by. */
+const NORMAL_PEAK = 29000;
+const MAX_LIFT = 6;
+
+/** The gain that brings a quiet line's peak up to NORMAL_PEAK; loud lines keep 1. */
+export function liftOf(pcm: Buffer): number {
+  let peak = 0;
+  for (let i = 0; i + 1 < pcm.length; i += 2) peak = Math.max(peak, Math.abs(pcm.readInt16LE(i)));
+  return peak ? Math.max(1, Math.min(MAX_LIFT, NORMAL_PEAK / peak)) : 1;
+}
+
 export function applyGain(pcm: Buffer, gain: number): Buffer {
   if (gain === 1) return pcm;
   const out = Buffer.alloc(pcm.length);
@@ -98,7 +120,7 @@ export class Player {
 
   /** 排在已写入的音频后面播放。采样率或设备变了时等前面播完再重开流。 */
   async write(sampleRate: number, raw: Buffer, gain = 1): Promise<void> {
-    const pcm = applyGain(raw, gain);
+    const pcm = toStereo(applyGain(raw, gain));
     const device = this.opts.device();
     if (this.rt && (sampleRate !== this.rate || device !== this.openedDevice)) {
       await this.drain();
@@ -112,7 +134,7 @@ export class Player {
     for (let at = 0; at < whole; at += this.frameBytes) rt.write(buf.subarray(at, at + this.frameBytes));
     this.carry = Buffer.from(buf.subarray(whole));
     const now = Date.now();
-    this.endsAt = Math.max(this.endsAt, now) + (whole / 2 / sampleRate) * 1000;
+    this.endsAt = Math.max(this.endsAt, now) + (whole / 4 / sampleRate) * 1000;
   }
 
   /** 一句写完：把不足一帧的尾巴补静音写出去。 */
@@ -151,12 +173,12 @@ export class Player {
     const wanted = device ? devices.find((d) => d.name === device) ?? devices.find((d) => d.name.includes(device)) : undefined;
     const deviceId = wanted?.id ?? rt.getDefaultOutputDevice();
     const frameSize = Math.round(sampleRate * FRAME_MS / 1000);
-    rt.openStream({ deviceId, nChannels: 1, firstChannel: 0 }, null, audify.RtAudioFormat.RTAUDIO_SINT16, sampleRate, frameSize, 'cortico-titanfall2', null, null);
+    rt.openStream({ deviceId, nChannels: 2, firstChannel: 0 }, null, audify.RtAudioFormat.RTAUDIO_SINT16, sampleRate, frameSize, 'cortico-titanfall2', null, null);
     rt.start();
     this.rt = rt;
     this.rate = sampleRate;
     this.openedDevice = device;
-    this.frameBytes = frameSize * 2;
+    this.frameBytes = frameSize * 4;
     this.endsAt = 0;
   }
 }

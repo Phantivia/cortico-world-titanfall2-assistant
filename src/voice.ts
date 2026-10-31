@@ -23,6 +23,9 @@ const SYNTH_TIMEOUT_MS = 60_000;
 
 export type VoicePhase = 'off' | 'starting' | 'ready' | 'error';
 
+/** Synthesized once when a voice starts, audio discarded, so the first real line does not wait for the models to load. */
+export const WARMUP_TEXT = '铁驭，系统在线，随时待命。';
+
 /** A voice BT speaks with: VoxCPM2 (`Voice`) or GPT-SoVITS (`SovitsVoice`); both clone the sample cut from the game. */
 export interface VoiceEngine {
   readonly phase: VoicePhase;
@@ -183,6 +186,10 @@ export class Voice implements VoiceEngine {
 
   async synth(text: string, signal?: AbortSignal): Promise<Pcm> {
     await this.start();
+    return this.request(text, signal);
+  }
+
+  private async request(text: string, signal?: AbortSignal): Promise<Pcm> {
     const cfg = this.opts.cfg();
     const body = {
       model: 'voxcpm2',
@@ -221,6 +228,7 @@ export class Voice implements VoiceEngine {
       } else {
         await this.spawnServer(cfg);
       }
+      await this.request(WARMUP_TEXT);
       this.setPhase('ready', null);
     } catch (err) {
       this.stop();

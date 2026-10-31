@@ -1040,7 +1040,7 @@ export class Titanfall2World implements World {
     const v = this.voice;
     const voiceLamp = !this.cfg.voice.enabled ? 'offline' : v?.phase === 'ready' ? 'online' : v?.phase === 'starting' ? 'loading' : v?.phase === 'error' ? 'error' : 'offline';
     return {
-      label: en ? 'Titanfall 2 Assistant' : '泰坦陨落 2 陪玩',
+      label: en ? 'Titanfall 2 Neural Link' : '泰坦陨落2 神经链接',
       lamps: [
         { label: en ? 'Game' : '游戏', state: this.sidecarError ? 'error' : this.link.server ? 'online' : 'offline', hint: this.stateLine() },
         { label: en ? 'Subtitles' : '字幕', state: this.link.client ? 'online' : 'offline' },

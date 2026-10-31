@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-titanfall2-assistant",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "type": "module",
   "description": "Cortico World for the Titanfall 2 campaign: Coo rides along as BT with live intel on the pilot, BT and hostiles, fires BT's missiles, smoke and sonar, and speaks in BT's voice and subtitles, through a Northstar mod and a sidecar.",
   "author": "Phantivia",
@@ -31,7 +31,7 @@
   "cortico": {
     "kind": "world",
     "api": 6,
-    "displayName": "Titanfall 2 Assistant",
+    "displayName": "Titanfall 2 Neural Link",
     "webUiClient": "dist/webui.js",
     "tags": [
       "game",
@@ -40,11 +40,11 @@
     ],
     "locales": {
       "zh": {
-        "displayName": "泰坦陨落 2 陪玩",
+        "displayName": "泰坦陨落2 神经链接",
         "description": "让 Coo 接入泰坦陨落 2 单人战役里的 BT:实时掌握铁驭、BT 和敌人的情报并提醒玩家，跟着剧情台词和游戏画面走，给出目标点、头盔收集品、BT 装备和电池的导引，替 BT 发射多目标飞弹、放电烟幕和声纳、隔墙标记敌人、让 BT 集火，用游戏里的 BT 字幕和 VoxCPM2 复刻的 BT 声音说话。经 Northstar 模组与 sidecar 进程连接。游戏需自备。仅 Windows。"
       },
       "en": {
-        "displayName": "Titanfall 2 Assistant",
+        "displayName": "Titanfall 2 Neural Link",
         "description": "Puts Coo into BT in the Titanfall 2 campaign: live intel on the pilot, BT and hostiles with call-outs, campaign dialogue and game frames as the story plays, a map guide to the objective, pilot helmets, BT loadouts and batteries, BT's missiles, electric smoke and sonar, wall-hack marks and focus fire on demand, and BT's in-game subtitles with a VoxCPM2 clone of BT's voice. Connects through a Northstar mod and a sidecar. Bring your own copy of the game. Windows only."
       }
     },

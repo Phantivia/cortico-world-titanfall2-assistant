@@ -6,10 +6,10 @@ import { Titanfall2World } from './world.ts';
 
 export const TITANFALL2: WorldDefinition<Titanfall2ConfigSection> = {
   id: TITANFALL2_ID,
-  label: '泰坦陨落 2 陪玩',
+  label: '泰坦陨落2 神经链接',
   defaults: () => structuredClone(TITANFALL2_DEFAULTS),
   preflight: () => {
-    if (process.platform !== 'win32') throw new Error('泰坦陨落 2 陪玩只支持 Windows:游戏、Northstar 和语音服务都是 Windows 程序。');
+    if (process.platform !== 'win32') throw new Error('泰坦陨落2 神经链接只支持 Windows:游戏、Northstar 和语音服务都是 Windows 程序。');
   },
   // ctx.cfg is the live `worlds.titanfall2` section; everything except the port is read when used
   create: (ctx) => new Titanfall2World({ cfg: ctx.cfg, timezone: ctx.timezone, dataDir: ctx.dataDir, runtimesRoot: runtimesRoot(), modelsRoot: modelsRoot() }),

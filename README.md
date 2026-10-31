@@ -1,14 +1,59 @@
-# 泰坦陨落 2 陪玩(cortico-world-titanfall2-assistant)
+# 泰坦陨落2 神经链接
 
-Owner: `src/definition.ts`
+npm 包名 `cortico-world-titanfall2-assistant` · Owner: `src/definition.ts`
 
-让 Coo 接入泰坦陨落 2 单人战役里的 BT,具体能做这些事：
-- 实时掌握铁驭、BT 和敌人的情报并提醒玩家。
+让 Coo 接入泰坦陨落 2 单人战役，成为你的泰坦 BT-7274:
+- 实时掌握铁驭、BT 和敌人的情报，有威胁时提醒你。
 - 跟着剧情台词和游戏画面走。
-- 给出地图导引：目标点、头盔收集品、BT 装备、电池。
-- 替 BT 出手：多目标飞弹、电烟幕、声纳、隔墙标记、集火。
-- 说话时显示游戏里 BT 的字幕，用 GPT-SoVITS(或 VoxCPM2)复刻的 BT 声音念出来，口吻是游戏里的 BT。
-- 主动程度分被动、均衡、主动三档，玩家随时可调。
+- 地图导引：目标点、头盔收集品、BT 装备、电池在哪。
+- 替 BT 出手：多目标飞弹、电烟幕、声纳、隔墙标记、让 BT 集火。
+- 说话时在游戏里出 BT 的字幕，用复刻的 BT 声音念出来。
+- 主动程度分被动、均衡、主动三档。
+
+## 需要准备
+
+- Windows 电脑，推荐 NVIDIA 显卡(BT 的声音靠显卡合成;没有 N 卡也能用，声音合成会慢很多)。
+- [Coopanion](https://github.com/Pal-AI-Lab/Coopanion)(或任何 Cortico 部署),并配好一个对话模型。
+- Steam 或 EA 版泰坦陨落 2,以及**装好并登录的 EA App**(Steam 版也要靠它登录)。
+- 不用自己装 Northstar、模组或 ffmpeg:缺的东西扩展会装。
+
+## 安装
+
+1. 打开 Coopanion 的设置窗口，左栏「World 扩展」→「手动安装」→「从 npm 安装」,包名填 `cortico-world-titanfall2-assistant`,点「安装」。
+2. 装好后左栏「World 扩展」下面会出现「泰坦陨落2 神经链接」,把它启用。
+3. 进入这一页的「快速启动」页签，检查第一行：游戏目录有没有找到(Steam 里装的会自动找到，别处的在「游戏目录与模组」里粘贴路径后按回车)、EA App 装了没有。
+4. 「BT 语音」里如果写着还缺文件，点「下载语音组件」。默认引擎 GPT-SoVITS 有 N 卡时约 6 GB、没有约 2.5 GB,优先从魔搭下载;另一个引擎 VoxCPM2 约 5.6 GB,只能用 N 卡，从 GitHub 和 Hugging Face 下载。下载只做一次。
+
+用 Cortico 命令行部署的：`pnpm add cortico-world-titanfall2-assistant`(在扩展目录)，再在配置里启用 `worlds.titanfall2`。
+
+## 使用
+
+1. 先打开 EA App 并登录。
+2. 在「快速启动」页签点「一键开始」,或者直接跟 Coo 说「打开泰坦陨落」。它会依次：缺 Northstar 就下载安装(约 107 MB,只有第一次)、装好模组、启动 BT 语音、写好显示设置、启动游戏并切到前台。
+3. 第一次进主菜单，Northstar 会问要不要用 EA 令牌登录它的主服务器：单人战役用不到，选「否」。
+4. 在主菜单选「战役」→「继续」或「选择任务」进入关卡。进了关卡，面板上会显示「已连上」,BT 就开始工作了。
+5. 正常玩就行。有事直接跟 Coo 说，比如「打那台泰坦」「放烟幕」「下一个目标在哪」。
+
+可以调的设置：
+- **BT 的主动程度**(「快速启动」页签):被动只在你开口或情况危急时说话出手;均衡(默认)会提醒要紧的威胁，战况吃紧时主动帮忙;主动全程配合作战。改了立刻生效。
+- **画面与切窗**页签：显示模式默认是铺满屏幕的无边框窗口，桌宠能显示在游戏上面(独占全屏会挡住桌宠);切到别的窗口(比如在桌宠里打字)时游戏默认继续运行，不暂停、不静音。
+- **BT 语音**:可以在 GPT-SoVITS 和 VoxCPM2 之间切换。
+
+想让桌宠的气泡和 BT 的字幕、声音同时出现，跟 Coo 说一句：「泰坦频道和气泡放在同一次回复里，泰坦频道在前，气泡紧跟在后面。」
+
+## 注意事项
+
+- **一定用「一键开始」(或让 Coo)启动游戏。** 从 Steam 或 EA App 直接点开始游戏，启动的是不带 Northstar 的原版，Coo 收不到游戏里的任何情况;面板会提示「从 Steam 启动的是原版，请用一键开始」,关掉游戏再点一键开始即可。
+- **游戏弹出 `#ORIGIN_LOGGED_OUT` 然后退出**:EA App 还没登录完。等 EA App 登录好再点一键开始。
+- **游戏弹出「There was a problem processing game logic」回到主菜单**:已知问题，多见于第 7 章开场炸墙一次刷出大量敌人时。原因是 Northstar 的网络回调和游戏生成敌人的脚本撞在一起;扩展已经尽量减少这种情况，但不能完全避免。遇到了点「继续」重进即可。
+- **GPT-SoVITS 和 VoxCPM2 怎么选**:游戏和语音合成抢同一块显卡，实测游戏运行时 GPT-SoVITS 一句可能要十几秒，VoxCPM2 两三秒;有 N 卡的话 VoxCPM2 跟得更紧。没有 N 卡只能用 GPT-SoVITS(CPU 档),BT 会说得比较慢。
+- **BT 的声音只在本机合成**,参考样片从你自己的游戏里现场截取，不随扩展分发。默认样片取自繁体中文(国语配音)语音包;游戏是别的语言时，到「配置」页签把「样片语言」改成游戏的语言(如 `english`),并把「样片台词」和「样片文字」换成那个语言里的一句 BT 台词及其逐字稿。
+- **字幕显示为繁体**:繁体中文版游戏的字体里没有简体字。英文版游戏可以在「配置」里关掉「字幕用繁体」。
+- **会改动游戏目录和设置**:往游戏目录装 Northstar 和模组(删掉 `NorthstarLauncher.exe`、`NorthstarLauncher.pdb`、`r2ds.bat`、`ns_startup_args*.txt`、`R2Northstar\`、`bin\x64_dedi\` 和 `bin\x64_retail\wsock32.*` 就回到原版);一键开始前按「画面与切窗」改写游戏的显示设置(「显示模式」选「保持游戏里的设置」则不改)。
+- **剧情画面会发给模型**:对话模型能看图时，剧情台词会附一张当时的游戏截图，按模型的用量计费。
+- 只支持单人战役，不支持多人模式。
+
+## 实现说明
 
 ```
 游戏(Northstar + 本包的模组 mod/Cortico.Titanfall2Assistant)
@@ -18,7 +63,7 @@ Owner: `src/definition.ts`
 引擎子进程(sidecar,src/sidecar.ts;截游戏画面也在这里)  ↔ fork IPC ↔  Titanfall2World(src/world.ts)
 ```
 
-## 要求
+### 依赖与组件
 
 - Windows,Node.js 22+。
 - 自备泰坦陨落 2,装好并登录 EA App(Steam 版也通过它登录)。
@@ -28,7 +73,7 @@ Owner: `src/definition.ts`
   - VoxCPM2:只能用 NVIDIA 显卡。llama.cpp-omni 运行时在 `<运行时根>/llama.cpp-omni/`,模型在 `<模型根>/vtuber/`,和 vtuber 扩展共用，约 5.6 GB。
 - 截 BT 样片不需要 ffmpeg:`src/binka.ts` 是 FFmpeg Bink Audio 解码器的移植，结果与 ffmpeg 相差不超过 PCM16 的一级。
 
-## 安装与启动
+### 启动流程
 
 装好本扩展，启用 `worlds.titanfall2`。World 启动时做这几件事：
 
@@ -62,7 +107,7 @@ Owner: `src/definition.ts`
 - BT 语音不随 World 启动：一键开始或有关卡连上时才启动，World 开着不玩游戏时不占显存。
 - 暂停菜单、读图和过场时模组不上报;停止上报超过 10 秒，World 会推一条状态事件。
 
-## 工具
+### 工具
 
 | 工具 | 作用 |
 |---|---|
@@ -93,7 +138,7 @@ Owner: `src/definition.ts`
 - 标记：`SonarStart` / `SonarEnd`。
 - 集火：`SetEnemy`。
 
-## 事件
+### 事件
 
 | type | 内容 | 触发 |
 |---|---|---|
@@ -107,7 +152,7 @@ Owner: `src/definition.ts`
 
 同类警报的最短间隔是 `intel.alertCooldownSec`。
 
-## 剧情
+### 剧情
 
 单人战役的台词几乎都经过游戏的 `sp/sh_sp_dialogue.gnut` 播放：
 - 原版脚本里 772 处台词调用走这套系统，直接播放的只有 47 处。
@@ -123,7 +168,7 @@ Owner: `src/definition.ts`
 
 段落是关卡当前起始点的序号(`GetCurrentStartPointIndex()`),随检查点推进而变。起始点的名字会透露接下来的剧情，所以只报序号。各关卡的起始点见 [docs/campaign.md](docs/campaign.md)。
 
-## 画面
+### 画面
 
 截图在引擎子进程里用 koffi 读屏幕上游戏窗口客户区的位置：
 - 游戏是 DirectX 11,`PrintWindow` 读出来是黑屏或旧画面，所以只读屏幕。
@@ -131,7 +176,7 @@ Owner: `src/definition.ts`
 - 挡在游戏上面的窗口(桌宠、浮层)也会被截进去。
 - 游戏在读图或黑屏时不附图。
 
-## BT 的声音与字幕
+### BT 的声音与字幕
 
 样片默认是 `diag_sp_aboveDome_BM121_03_01_mcor_bt`,国语，5.8 秒，原文是「这地方要崩塌了，建议我们尽快离开。你离我的位置不远。抬头显示有标记。」(Whisper 转写核对过)。换样片前先用 GPT-SoVITS 试一句：有的 BT 台词当参考时它很快就停，只出零点几秒，比如原先的默认样片 `diag_sp_Spoke0_BE331_18_01_mcor_bt`。
 
@@ -154,7 +199,7 @@ GPT-SoVITS 按 api_v2 的 `/tts` 流式请求，一次只发一句(它只有一�
 - `titanfall2_say` 在这句开始出声时返回。Cortico 按顺序执行同一次回复里的工具调用，所以紧跟在它后面的调用(比如桌宠气泡)和 BT 开口同时发生。
 - 游戏暂停或读图时字幕送不进去，声音照样播出;回执写明这句已经说出口，免得 Coo 重说。
 
-## 主动程度与口吻
+### 主动程度与口吻
 
 配置 `initiative`(快速启动页签和配置页签都能改)分三档，对应的要求作为 `{{titanfall2.initiative}}` 写进环境提示词(`src/initiative.ts`):
 - 被动：铁驭开口或下令才说话、出手，只有要命的时候主动提醒。

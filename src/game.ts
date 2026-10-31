@@ -196,6 +196,19 @@ export async function runningGame(): Promise<number[]> {
   return (await Promise.all(GAME_PROCESSES.map(pidsOf))).flat();
 }
 
+/**
+ * PIDs of Titanfall2.exe processes without Northstar.dll loaded: the game started from Steam or the EA app, where
+ * the mod never loads. Steam's `-northstar` launch option loads Northstar into Titanfall2.exe early, so a
+ * process is judged once it has run a few seconds.
+ */
+export async function vanillaGame(): Promise<number[]> {
+  const game = await pidsOf('Titanfall2.exe');
+  if (!game.length) return [];
+  const out = await output('tasklist', ['/M', 'Northstar.dll', '/FO', 'CSV', '/NH']);
+  const northstar = new Set([...out.matchAll(/^"[^"]+","(\d+)"/gm)].map((m) => Number(m[1])));
+  return game.filter((pid) => !northstar.has(pid));
+}
+
 async function pidsOf(image: string): Promise<number[]> {
   const out = await output('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/FO', 'CSV', '/NH']);
   return [...out.matchAll(/^"[^"]+","(\d+)"/gm)].map((m) => Number(m[1]));

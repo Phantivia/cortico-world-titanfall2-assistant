@@ -20,6 +20,20 @@ interface Progress {
   total: number | null;
 }
 
+type VoiceEngineId = 'gpt-sovits' | 'voxcpm2';
+type Initiative = 'passive' | 'balanced' | 'active';
+const INITIATIVES: readonly Initiative[] = ['passive', 'balanced', 'active'];
+
+interface VoiceFiles {
+  external: boolean;
+  missing: string[];
+  downloadBytes: number;
+}
+
+const filesReady = (f: VoiceFiles | null): boolean => !!f && (f.external || f.downloadBytes === 0);
+const ENGINES: readonly VoiceEngineId[] = ['gpt-sovits', 'voxcpm2'];
+const VERSION_NAMES: Record<string, string> = { v5turbo: 'V5 turbo', v2ProPlus: 'v2ProPlus' };
+
 type PlayStep = 'idle' | 'northstar' | 'mod' | 'ea' | 'launch' | 'menu' | 'playing' | 'error';
 
 interface StartState {
@@ -32,12 +46,19 @@ interface StartState {
   play: { step: PlayStep; detail: string; progress: Progress | null } | null;
   northstarVersion: string;
   eaApp: boolean;
+  /** Set while Titanfall2.exe runs without Northstar. */
+  vanilla: string | null;
+  /** Northstar's main menu will ask about its master server. */
+  northstarAsks: boolean;
+  initiative: Initiative;
   voice: {
     enabled: boolean;
+    engine: VoiceEngineId;
+    tier: { tier: string; version: string } | null;
     phase: 'off' | 'starting' | 'ready' | 'error';
     detail: string | null;
-    assets: { external: boolean; runtimeDir: string | null; modelsDir: string; missingModels: string[]; downloadBytes: number };
-    download: { progress: Progress | null; error: string | null; running: boolean };
+    files: VoiceFiles | null;
+    download: { progress: Progress | null; error: string | null; running: boolean } | null;
   };
   map: string | null;
   objective: string | null;
@@ -57,8 +78,17 @@ const TEXT = {
       folder: (dir: string | null) => (dir ? `游戏 ${dir}` : '没找到游戏目录'),
       northstar: (c: GameCheck | null, v: string) => (c?.northstar ? 'Northstar 已装' : `Northstar 会下载安装 v${v}(约 107 MB)`),
       ea: (ok: boolean) => (ok ? 'EA App 已装' : '没装 EA App'),
-      voice: (s: StartState['voice']) => (!s.enabled ? 'BT 语音已关闭' : s.assets.external || s.assets.downloadBytes === 0 ? 'BT 语音组件齐全' : 'BT 语音缺组件，只出字幕'),
+      voice: (s: StartState['voice']) => (!s.enabled ? 'BT 语音已关闭' : filesReady(s.files) ? 'BT 语音组件齐全' : 'BT 语音缺组件，只出字幕'),
     },
+    initTitle: 'BT 的主动程度',
+    initDesc: 'Coo 以 BT 的身份陪玩时，不等铁驭开口就说话、出手的程度。改了立刻告诉 Coo。',
+    initiatives: { passive: '被动', balanced: '均衡', active: '主动' } as Record<Initiative, string>,
+    initiativeHelp: {
+      passive: '铁驭开口或下令才说话、出手;只有要命的时候主动提醒。',
+      balanced: '提醒要紧的威胁;战况吃紧时主动用飞弹、烟幕或声纳帮一把。',
+      active: '全程配合作战：主动开火、放烟幕、标记，脱战后报下一步该去哪。',
+    } as Record<Initiative, string>,
+    northstarHint: '第一次经 Northstar 进主菜单会弹出「是否用 EA 令牌登录 Northstar 主服务器」的对话框：单人战役用不到，选「否」。',
     status: (s: StartState) =>
       `${s.running.length ? '游戏在运行' : '游戏没在运行'} · ${s.link.server ? `已连上${s.map ? `,${s.map}` : ''}` : '没有关卡在上报'}${s.objective ? ` · ${s.objective}` : ''}`,
     gameTitle: '游戏目录与模组',
@@ -71,13 +101,14 @@ const TEXT = {
     no: '没有',
     notFound: '没找到游戏目录',
     voiceTitle: 'BT 语音',
-    voiceDesc: 'VoxCPM2 按游戏里截取的 BT 台词复刻声音，要 NVIDIA 显卡;截取样片用 PATH 里的 ffmpeg。一键开始和进入关卡时自动启动。',
+    voiceDesc: '按游戏里截取的 BT 台词复刻声音，一键开始和进入关卡时自动启动。GPT-SoVITS 在 NVIDIA 显卡上用 V5 turbo,没有就用 CPU 跑 v2ProPlus,组件从魔搭下载;VoxCPM2 只能用 NVIDIA 显卡。',
+    engines: { 'gpt-sovits': 'GPT-SoVITS', voxcpm2: 'VoxCPM2' } as Record<VoiceEngineId, string>,
+    tier: (x: { tier: string; version: string }) => `${x.tier === 'cuda' ? '显卡档' : 'CPU 档'} · ${VERSION_NAMES[x.version] ?? x.version}`,
     voiceStart: '启动语音',
     sample: '重新截取样片',
     test: '试听',
     phase: { off: '未启动', starting: '启动中', ready: '就绪', error: '出错' },
-    missing: (a: StartState['voice']['assets'], gb: string) =>
-      `缺少${a.runtimeDir ? '' : ' llama.cpp-omni 运行时'}${a.missingModels.length ? ` ${a.missingModels.join('、')}` : ''},共约 ${gb}`,
+    missing: (f: VoiceFiles, gb: string) => `还缺 ${f.missing.length} 个文件(运行时与模型),共约 ${gb}`,
     download: '下载语音组件',
     saved: '已保存',
     done: '完成',
@@ -93,8 +124,17 @@ const TEXT = {
       folder: (dir: string | null) => (dir ? `Game ${dir}` : 'No game folder found'),
       northstar: (c: GameCheck | null, v: string) => (c?.northstar ? 'Northstar installed' : `Northstar v${v} will be downloaded (about 107 MB)`),
       ea: (ok: boolean) => (ok ? 'EA app installed' : 'EA app not installed'),
-      voice: (s: StartState['voice']) => (!s.enabled ? 'BT voice off' : s.assets.external || s.assets.downloadBytes === 0 ? 'BT voice files present' : 'BT voice files missing: subtitles only'),
+      voice: (s: StartState['voice']) => (!s.enabled ? 'BT voice off' : filesReady(s.files) ? 'BT voice files present' : 'BT voice files missing: subtitles only'),
     },
+    initTitle: 'BT\'s initiative',
+    initDesc: 'How readily Coo, riding along as BT, speaks and acts without being asked. Coo is told as soon as it changes.',
+    initiatives: { passive: 'Passive', balanced: 'Balanced', active: 'Active' } as Record<Initiative, string>,
+    initiativeHelp: {
+      passive: 'Speaks and acts when the pilot asks; warns unasked only in mortal danger.',
+      balanced: 'Calls out the threats that matter; steps in with missiles, smoke or sonar when the fight turns.',
+      active: 'Fights alongside throughout: fires, smokes and marks on its own, and reports where to go next after a fight.',
+    } as Record<Initiative, string>,
+    northstarHint: 'The first time Northstar reaches the main menu, it asks whether to sign in to the Northstar master server with your EA token: the campaign does not need it, pick No.',
     status: (s: StartState) =>
       `${s.running.length ? 'Game running' : 'Game not running'} · ${s.link.server ? `connected${s.map ? `, ${s.map}` : ''}` : 'no level reporting'}${s.objective ? ` · ${s.objective}` : ''}`,
     gameTitle: 'Game folder and mod',
@@ -107,13 +147,14 @@ const TEXT = {
     no: 'no',
     notFound: 'No game folder found',
     voiceTitle: 'BT voice',
-    voiceDesc: 'VoxCPM2 clones BT from a line cut out of the game and needs an NVIDIA GPU; the sample is cut with ffmpeg from PATH. Starts on one-click start and when a level connects.',
+    voiceDesc: 'Clones BT from a line cut out of the game; starts on one-click start and when a level connects. GPT-SoVITS runs V5 turbo on NVIDIA GPUs and v2ProPlus on the CPU otherwise, downloaded from ModelScope; VoxCPM2 needs an NVIDIA GPU.',
+    engines: { 'gpt-sovits': 'GPT-SoVITS', voxcpm2: 'VoxCPM2' } as Record<VoiceEngineId, string>,
+    tier: (x: { tier: string; version: string }) => `${x.tier === 'cuda' ? 'GPU tier' : 'CPU tier'} · ${VERSION_NAMES[x.version] ?? x.version}`,
     voiceStart: 'Start voice',
     sample: 'Cut sample again',
     test: 'Test',
     phase: { off: 'off', starting: 'starting', ready: 'ready', error: 'error' },
-    missing: (a: StartState['voice']['assets'], gb: string) =>
-      `Missing${a.runtimeDir ? '' : ' the llama.cpp-omni runtime'}${a.missingModels.length ? ` ${a.missingModels.join(', ')}` : ''}, about ${gb}`,
+    missing: (f: VoiceFiles, gb: string) => `${f.missing.length} files to download (runtime and models), about ${gb}`,
     download: 'Download voice files',
     saved: 'Saved',
     done: 'Done',
@@ -128,6 +169,7 @@ const startPanel: WebUiPanel = {
     const playCard = ui.sheet({ title: t.playTitle, desc: t.playDesc });
     root.appendChild(playCard.el);
     const readyLine = ui.msgline();
+    const hintLine = ui.msgline();
     const playBar = ui.rowbar();
     const playBtn = ui.button(t.play, { variant: 'primary', onClick: () => void play() });
     const frontBtn = ui.button(t.front, { onClick: () => void play() });
@@ -137,7 +179,15 @@ const startPanel: WebUiPanel = {
     const playLine = ui.msgline();
     const playErr = ui.msgline('', true);
     const statusLine = ui.msgline();
-    playCard.body.append(readyLine, playBar, playProgress.el, playLine, playErr, statusLine);
+    playCard.body.append(readyLine, hintLine, playBar, playProgress.el, playLine, playErr, statusLine);
+
+    const initCard = ui.sheet({ title: t.initTitle, desc: t.initDesc });
+    root.appendChild(initCard.el);
+    const initSeg = ui.segmented(INITIATIVES.map((value) => ({ value, label: t.initiatives[value] })), {
+      onSelect: (v) => void ctx.setConfig('world:titanfall2:intel', { 'worlds.titanfall2.initiative': v }).then(() => load()),
+    });
+    const initLine = ui.msgline();
+    initCard.body.append(initSeg.el, initLine);
 
     const gameCard = ui.sheet({ title: t.gameTitle, desc: t.gameDesc });
     root.appendChild(gameCard.el);
@@ -153,6 +203,12 @@ const startPanel: WebUiPanel = {
 
     const voiceCard = ui.sheet({ title: t.voiceTitle, desc: t.voiceDesc });
     root.appendChild(voiceCard.el);
+    const engineBar = ui.rowbar();
+    const engines = ui.segmented(ENGINES.map((value) => ({ value, label: t.engines[value] })), {
+      onSelect: (v) => void ctx.setConfig('world:titanfall2:voice', { 'worlds.titanfall2.voice.engine': v }).then(() => load()),
+    });
+    const tierSlot = ui.h('span');
+    engineBar.append(engines.el, tierSlot);
     const voiceBar = ui.rowbar();
     const phaseSlot = ui.h('span');
     const voiceStartBtn = ui.button(t.voiceStart, { onClick: () => void act('voice-start') });
@@ -165,7 +221,7 @@ const startPanel: WebUiPanel = {
     missingBar.append(missingLine, downloadBtn);
     const voiceProgress = ui.progress({ label: '' });
     const voiceLine = ui.msgline('', true);
-    voiceCard.body.append(voiceBar, missingBar, voiceProgress.el, voiceLine);
+    voiceCard.body.append(engineBar, voiceBar, missingBar, voiceProgress.el, voiceLine);
 
     const showProgress = (bar: ReturnType<typeof ui.progress>, p: Progress | null): void => {
       bar.el.hidden = !p;
@@ -225,6 +281,11 @@ const startPanel: WebUiPanel = {
       if (step === 'error') playErr.textContent = s.play?.detail ?? '';
       else if (busy) playErr.textContent = '';
       if (s.sidecarError) playErr.textContent = s.sidecarError;
+      if (s.vanilla) playErr.textContent = s.vanilla;
+      hintLine.textContent = s.northstarAsks ? t.northstarHint : '';
+      hintLine.hidden = !s.northstarAsks;
+      initSeg.setValue(s.initiative);
+      initLine.textContent = t.initiativeHelp[s.initiative] ?? '';
       statusLine.textContent = t.status(s);
 
       if (document.activeElement !== dirInput) dirInput.value = s.gameDir;
@@ -235,13 +296,16 @@ const startPanel: WebUiPanel = {
       installBtn.disabled = !c?.northstar;
 
       const v = s.voice;
+      engines.setValue(v.engine);
+      tierSlot.replaceChildren(...(v.tier ? [ui.pill(t.tier(v.tier), 'plain')] : []));
       phaseSlot.replaceChildren(ui.pill(t.phase[v.phase], v.phase === 'ready' ? 'on' : v.phase === 'error' ? 'off' : 'plain'));
-      const missing = !v.assets.external && v.assets.downloadBytes > 0;
-      missingBar.hidden = !missing && !v.download.running;
-      missingLine.textContent = missing ? t.missing(v.assets, ui.fmt.bytes(v.assets.downloadBytes)) : '';
-      downloadBtn.disabled = v.download.running;
-      showProgress(voiceProgress, v.download.running ? v.download.progress ?? { label: '…', done: 0, total: null } : null);
-      if (v.download.error) voiceLine.textContent = v.download.error;
+      const missing = !filesReady(v.files);
+      const downloading = !!v.download?.running;
+      missingBar.hidden = !missing && !downloading;
+      missingLine.textContent = missing && v.files ? t.missing(v.files, ui.fmt.bytes(v.files.downloadBytes)) : '';
+      downloadBtn.disabled = downloading;
+      showProgress(voiceProgress, downloading ? v.download?.progress ?? { label: '…', done: 0, total: null } : null);
+      if (v.download?.error) voiceLine.textContent = v.download.error;
       else if (v.phase === 'error' && v.detail) voiceLine.textContent = v.detail;
       voiceStartBtn.disabled = !v.enabled || missing || v.phase === 'ready' || v.phase === 'starting';
       testBtn.disabled = v.phase !== 'ready';
@@ -289,7 +353,7 @@ const DISPLAY_TEXT = {
     resolution: '分辨率',
     fitScreen: (s: DisplayState['screen']) => (s ? `跟随主屏(${s.width}×${s.height})` : '跟随主屏'),
     keepGame: '保持游戏里的大小',
-    current: (g: GameDisplay | null) => (g ? `游戏设置现在是 ${g.fullscreen ? '全屏' : g.borderless ? '无边框窗口' : '窗口'} ${g.width}×${g.height}` : '游戏还没生成显示设置文件，第一次启动之后才能改'),
+    current: (g: GameDisplay | null) => (g ? `游戏设置现在是 ${g.fullscreen ? '全屏' : g.borderless ? '无边框窗口' : '窗口'} ${g.width}×${g.height}` : '游戏还没有显示设置文件，一键开始时按上面的设置新建'),
     pending: '一键开始时会改成上面的设置',
     apply: '现在写入',
     running: '游戏开着，关掉后再写入',
@@ -310,7 +374,7 @@ const DISPLAY_TEXT = {
     resolution: 'Resolution',
     fitScreen: (s: DisplayState['screen']) => (s ? `Primary screen (${s.width}×${s.height})` : 'Primary screen'),
     keepGame: 'Keep the game\'s size',
-    current: (g: GameDisplay | null) => (g ? `The game is set to ${g.fullscreen ? 'fullscreen' : g.borderless ? 'borderless window' : 'window'} ${g.width}×${g.height}` : 'The game has not written its display settings yet; they can be changed after its first start'),
+    current: (g: GameDisplay | null) => (g ? `The game is set to ${g.fullscreen ? 'fullscreen' : g.borderless ? 'borderless window' : 'window'} ${g.width}×${g.height}` : 'The game has no display settings file yet; one-click start creates it with the setting above'),
     pending: 'One-click start changes it to the setting above',
     apply: 'Write now',
     running: 'The game is open; close it to write',

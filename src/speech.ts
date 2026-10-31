@@ -8,7 +8,7 @@
 import type { Logger } from 'cortico/core/types.ts';
 import type { Titanfall2ConfigSection } from './config.ts';
 import type { Player } from './player.ts';
-import type { Pcm, Voice } from './voice.ts';
+import type { Pcm, VoiceEngine } from './voice.ts';
 
 export const SPEAKER = 'BT: ';
 const PAGE_LINES = 2;
@@ -70,7 +70,7 @@ export interface SubtitleSink {
 
 export interface SpeechOptions {
   cfg: () => Pick<Titanfall2ConfigSection, 'voice' | 'subtitle'>;
-  voice: Voice;
+  voice: VoiceEngine;
   /** The voice can synthesize now; otherwise the line goes out as subtitles only. */
   voiceReady: () => boolean;
   player: Player;

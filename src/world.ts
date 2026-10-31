@@ -22,22 +22,22 @@ import { nowIso } from 'cortico/core/util.ts';
 import * as OpenCC from 'opencc-js';
 import { TITANFALL2_ID, titanfall2ConfigGroups, type Titanfall2ConfigSection } from './config.ts';
 import type { CaptureResult, ChildToMain, EngineNotice, EngineRequest, Frame } from './engine-ipc.ts';
-import type { Progress } from './download.ts';
-import { checkGame, eaAppPath, findGameDirs, gameArgs, installMod, NORTHSTAR_VERSION, runningGame, type GameCheck } from './game.ts';
+import { checkGame, eaAppPath, findGameDirs, gameArgs, installMod, NORTHSTAR_VERSION, runningGame, vanillaGame, type GameCheck } from './game.ts';
 import {
   Labels, btLine, className, countText, enemiesBlock, enemyText, weaponName as weaponNameOf, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
   type Lookup, type SeenEnemy,
 } from './intel.ts';
-import { Play } from './play.ts';
+import { INITIATIVE_NAMES, INITIATIVE_TEXT } from './initiative.ts';
+import { Play, VANILLA_TEXT } from './play.ts';
 import { Player } from './player.ts';
 import type { ClientPost, CommandAck, GameEvent, PoiFrame, ServerCommand, SubtitleCommand } from './protocol.ts';
 import { Speech, width as textWidth } from './speech.ts';
 import { Captions } from './story.ts';
 import { TITANFALL2_TOOL_DECLS } from './tools.ts';
-import { Voice, type VoicePhase } from './voice.ts';
-import { downloadVoiceAssets, voiceAssets } from './voice-assets.ts';
+import type { VoicePhase } from './voice.ts';
+import { Voices } from './voices.ts';
 import type { ScreenModes } from './screen.ts';
-import { readDisplayFile, sameDisplay, targetDisplay, videoConfigFile, writeDisplayFile, type GameDisplay } from './videoconfig.ts';
+import { northstarWillAsk, readDisplayFile, sameDisplay, targetDisplay, videoConfigFile, writeDisplayFile, type GameDisplay } from './videoconfig.ts';
 
 const ENGINE_FILE = fileURLToPath(new URL('./engine-child.ts', import.meta.url));
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -46,6 +46,8 @@ const COMMAND_TIMEOUT_MS = 4000;
 const SUBTITLE_TIMEOUT_MS = 3000;
 /** A link that stays down this long is reported; shorter gaps are pauses and loading. */
 const LINK_DOWN_REPORT_MS = 10_000;
+/** How often the World checks for a game running without Northstar while no level reports. */
+const VANILLA_CHECK_MS = 5000;
 const SNAPSHOT_ANCHOR_MS = 120_000;
 const LABEL_KEEP_MS = 60_000;
 const KILL_BATCH_MS = 3000;
@@ -171,14 +173,19 @@ export class Titanfall2World implements World {
   private readonly helmetsAnnounced = new Set<string>();
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private voice: Voice | null = null;
+  private voice: Voices | null = null;
   private player: Player | null = null;
   private speech: Speech | null = null;
   private play: Play | null = null;
+  /** Vanilla game processes by PID with how many checks in a row found them; each is told once. */
+  private readonly vanillaSeen = new Map<number, number>();
+  private readonly vanillaTold = new Set<number>();
+  private lastVanillaCheck = 0;
+  /** The initiative the bot was last told about; a change is reported as it happens. */
+  private initiativeTold: string | null = null;
   /** The Steam copy found at start or by the last detection; used while `gameDir` is empty. */
   private detectedDir: string | null = null;
   private readonly lookups = new Map<string, { at: number; value: unknown; pending: boolean }>();
-  private voiceDownload: { progress: Progress | null; error: string | null; running: boolean } = { progress: null, error: null, running: false };
 
   constructor(private readonly opts: Titanfall2WorldOptions) {
     this.cfg = opts.cfg;
@@ -192,12 +199,13 @@ export class Titanfall2World implements World {
     this.stopped = false;
     const log = host.log;
     this.player = new Player({ device: () => this.cfg.voice.outputDevice, volume: () => this.cfg.voice.volume, log });
-    this.voice = new Voice({
+    this.voice = new Voices({
       cfg: () => this.cfg.voice,
       gameDir: () => this.gameDir(),
       sampleFile: join(this.opts.dataDir, 'titanfall2-bt-sample.wav'),
       runtimesRoot: this.opts.runtimesRoot,
       modelsRoot: this.opts.modelsRoot,
+      dataDir: this.opts.dataDir,
       log,
       onPhase: (phase, detail) => this.onVoicePhase(phase, detail),
     });
@@ -653,6 +661,29 @@ export class Titanfall2World implements World {
       });
     }
     if (this.link.server && !this.snapshotArmed && now - this.lastSnapshotAt >= this.cfg.intel.snapshotSec * 1000) this.armSnapshot();
+    const initiative = this.cfg.initiative in INITIATIVE_TEXT ? this.cfg.initiative : 'balanced';
+    if (this.initiativeTold === null) this.initiativeTold = initiative;
+    else if (initiative !== this.initiativeTold) {
+      this.initiativeTold = initiative;
+      this.emit('titanfall2.state', `玩家把主动程度改成了「${INITIATIVE_NAMES[initiative]}」:${INITIATIVE_TEXT[initiative]}`, 'piggyback');
+    }
+    if (!this.link.server && now - this.lastVanillaCheck >= VANILLA_CHECK_MS) {
+      this.lastVanillaCheck = now;
+      void vanillaGame().then((pids) => this.onVanilla(pids));
+    }
+  }
+
+  /** Tells the bot once per game process that it runs without Northstar, after two checks in a row found it. */
+  private onVanilla(pids: number[]): void {
+    for (const pid of [...this.vanillaSeen.keys()]) if (!pids.includes(pid)) this.vanillaSeen.delete(pid);
+    for (const pid of pids) {
+      const seen = (this.vanillaSeen.get(pid) ?? 0) + 1;
+      this.vanillaSeen.set(pid, seen);
+      if (seen < 2 || this.vanillaTold.has(pid)) continue;
+      this.vanillaTold.add(pid);
+      this.log?.warn('游戏不是经 Northstar 启动的', { pid });
+      this.emit('titanfall2.state', '游戏是从 Steam 或 EA App 直接启动的原版，没有 Northstar:模组不会加载，这边收不到游戏里的任何情况，BT 也不能出手和说话。请玩家关掉游戏，用一键开始(或让你打开游戏)。', 'flush');
+    }
   }
 
   /* ---------- snapshot ---------- */
@@ -927,20 +958,20 @@ export class Titanfall2World implements World {
     if (this.cfg.display.mode === 'game') return '保持游戏里的设置';
     if ((await runningGame()).length) return '游戏在运行，下次启动前写入';
     const file = await videoConfigFile();
-    const read = file ? readDisplayFile(file) : null;
-    if (!file || !read) return '游戏还没生成显示设置文件，第一次启动之后生效';
-    if (!read.display) return `看不懂 ${file} 里的显示设置，没有改`;
-    const target = targetDisplay(this.cfg.display, read.display, await this.screen());
-    if (!target || sameDisplay(target, read.display)) return '游戏设置已经是这样';
-    writeDisplayFile(file, read.text, target);
-    return '已写入游戏设置';
+    if (!file) return '找不到「文档」文件夹，没有写显示设置';
+    const read = readDisplayFile(file);
+    if (read && !read.display) return `看不懂 ${file} 里的显示设置，没有改`;
+    const target = targetDisplay(this.cfg.display, read?.display ?? null, await this.screen());
+    if (!target || (read?.display && sameDisplay(target, read.display))) return '游戏设置已经是这样';
+    writeDisplayFile(file, read?.text ?? null, target);
+    return read ? '已写入游戏设置' : '已新建游戏的显示设置文件';
   }
 
   private async displayState(): Promise<Record<string, unknown>> {
     const file = await videoConfigFile();
     const read = file ? readDisplayFile(file) : null;
     const screen = await this.screen();
-    const target: GameDisplay | null = read?.display ? targetDisplay(this.cfg.display, read.display, screen) : null;
+    const target: GameDisplay | null = !read || read.display ? targetDisplay(this.cfg.display, read?.display ?? null, screen) : null;
     return {
       display: this.cfg.display,
       focus: this.cfg.focus,
@@ -949,7 +980,7 @@ export class Titanfall2World implements World {
       screen,
       file,
       game: read?.display ?? null,
-      pending: !!(target && read?.display && !sameDisplay(target, read.display)),
+      pending: !!target && (!read?.display || !sameDisplay(target, read.display)),
       running: (await this.cached('running', 2000, runningGame)).length > 0,
     };
   }
@@ -1001,7 +1032,7 @@ export class Titanfall2World implements World {
   }
 
   envPromptVars(): Record<string, string> {
-    return { 'titanfall2.state': this.stateLine() };
+    return { 'titanfall2.state': this.stateLine(), 'titanfall2.initiative': INITIATIVE_TEXT[this.cfg.initiative] ?? INITIATIVE_TEXT.balanced };
   }
 
   webUi(language: Language = 'zh'): WorldWebUiDecl {
@@ -1029,7 +1060,10 @@ export class Titanfall2World implements World {
           description: en ? 'How the bot rides along as BT.' : '怎么以 BT 的身份陪玩。',
           path: ENV_PROMPT_FILE,
           role: 'envPrompt',
-          vars: [{ name: 'titanfall2.state', description: en ? 'Whether the game is connected, and the level' : '游戏连没连上、在哪一关' }],
+          vars: [
+            { name: 'titanfall2.state', description: en ? 'Whether the game is connected, and the level' : '游戏连没连上、在哪一关' },
+            { name: 'titanfall2.initiative', description: en ? 'What the initiative setting asks of the bot' : '主动程度设置对应的要求' },
+          ],
         },
       ],
     };
@@ -1048,6 +1082,9 @@ export class Titanfall2World implements World {
       resolvedDir: dir,
       check,
       running: await this.cached('running', 2000, runningGame),
+      vanilla: (await this.cached('vanilla', 3000, vanillaGame)).length > 0 ? VANILLA_TEXT : null,
+      northstarAsks: await this.cached('northstarAsks', 10_000, northstarWillAsk),
+      initiative: this.cfg.initiative,
       link: this.link,
       line: this.stateLine(),
       sidecarError: this.sidecarError,
@@ -1056,32 +1093,16 @@ export class Titanfall2World implements World {
       eaApp: (await this.cached('ea', 30_000, eaAppPath)) !== null,
       voice: {
         enabled: this.cfg.voice.enabled,
+        engine: this.cfg.voice.engine,
+        tier: this.voice?.tier() ?? null,
         phase: this.voice?.phase ?? 'off',
         detail: this.voice?.detail ?? null,
-        assets: voiceAssets(this.cfg.voice, this.opts.runtimesRoot, this.opts.modelsRoot),
-        download: this.voiceDownload,
+        files: this.voice?.files() ?? null,
+        download: this.voice?.downloadState() ?? null,
       },
       map: this.map ? mapName(this.map) : null,
       objective: this.objective || null,
     };
-  }
-
-  /** Downloads the missing voice runtime and weights in the background, then starts the voice. */
-  private downloadVoice(): void {
-    if (this.voiceDownload.running) return;
-    this.voiceDownload = { progress: null, error: null, running: true };
-    void downloadVoiceAssets(this.cfg.voice, this.opts.runtimesRoot, this.opts.modelsRoot, (p) => {
-      this.voiceDownload.progress = p;
-    })
-      .then(() => {
-        this.voiceDownload = { progress: null, error: null, running: false };
-        this.log?.info('BT 语音组件已下载');
-        this.startVoice();
-      })
-      .catch((err: unknown) => {
-        this.voiceDownload = { progress: null, error: err instanceof Error ? err.message : String(err), running: false };
-        this.log?.warn('BT 语音组件下载失败', { err: this.voiceDownload.error });
-      });
   }
 
   private async invoke(panel: string, method: string, args: unknown[] = []): Promise<unknown> {
@@ -1107,7 +1128,7 @@ export class Titanfall2World implements World {
         await this.voice?.start();
         return { phase: this.voice?.phase };
       case 'download-voice':
-        this.downloadVoice();
+        this.voice?.startDownload(() => this.startVoice());
         return null;
       case 'refresh-sample':
         return this.voice?.refreshSample();

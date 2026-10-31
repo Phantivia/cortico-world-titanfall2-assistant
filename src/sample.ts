@@ -4,12 +4,12 @@
  * `r2/sound/general.mbnk` (version 13) lists every source: name, language, patch, and where its
  * Bink Audio header and data sit. The header lives at `headerOffset` of the `.mstr` stream file with
  * the same language and patch; the data starts at that file's `dataOffset` + the source's data
- * offset. Header + data is a standalone `1FCB` Bink Audio file that ffmpeg's binka demuxer decodes.
+ * offset. Header + data is a standalone `1FCB` Bink Audio file, decoded by binka.ts.
  * Layout as read by LegionPlus (MilesLib.cpp).
  */
-import { execFile } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { decodeBinka, toMonoWav } from './binka.ts';
 
 /** Miles language indices of Titanfall 2. */
 export const MILES_LANGUAGES = ['english', 'french', 'german', 'spanish', 'italian', 'japanese', 'polish', 'portuguese', 'russian', 'tchinese', 'mspanish'] as const;
@@ -97,30 +97,12 @@ export function binkaOf(soundDir: string, src: MilesSource): Buffer {
   return Buffer.concat([header, readAt(path, dataBase + src.dataOffset, total - src.headerSize)]);
 }
 
-function run(file: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { windowsHide: true, maxBuffer: 16 << 20 }, (err, _stdout, stderr) => {
-      if (err) reject(new Error(`${file} ${err.message}${stderr ? `: ${String(stderr).slice(-300)}` : ''}`));
-      else resolve(String(stderr));
-    });
-  });
-}
-
-/**
- * Writes the alias as mono PCM16 to `outWav` through ffmpeg; returns the source it used.
- * ffmpeg reports an I/O error at the end of every binka stream, so only a missing output fails.
- */
-export async function extractSample(gameDir: string, alias: string, language: string, outWav: string, ffmpeg = 'ffmpeg'): Promise<MilesSource> {
+/** Writes the alias as mono PCM16 to `outWav`; returns the source it used. */
+export async function extractSample(gameDir: string, alias: string, language: string, outWav: string): Promise<MilesSource> {
   const soundDir = join(gameDir, 'r2', 'sound');
   const src = findSource(soundDir, alias, languageIndex(language));
   if (!src) throw new Error(`"${alias}" is not in the ${language} audio of ${soundDir}`);
   mkdirSync(dirname(outWav), { recursive: true });
-  const binka = `${outWav}.binka`;
-  writeFileSync(binka, binkaOf(soundDir, src));
-  await run(ffmpeg, ['-v', 'error', '-y', '-i', binka, '-ac', '1', '-c:a', 'pcm_s16le', outWav]).catch((err: Error) => {
-    if (!/I\/O error/.test(err.message)) throw err;
-  });
-  rmSync(binka, { force: true });
-  if (!existsSync(outWav)) throw new Error('ffmpeg wrote no output');
+  writeFileSync(outWav, toMonoWav(decodeBinka(binkaOf(soundDir, src))));
   return src;
 }

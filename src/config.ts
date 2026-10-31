@@ -7,6 +7,12 @@ export const TITANFALL2_ID = 'titanfall2';
 export const DISPLAY_MODES = ['borderless', 'windowed', 'fullscreen', 'game'] as const;
 export type DisplayMode = (typeof DISPLAY_MODES)[number];
 
+export const INITIATIVES = ['passive', 'balanced', 'active'] as const;
+export type Initiative = (typeof INITIATIVES)[number];
+
+export const VOICE_ENGINES = ['gpt-sovits', 'voxcpm2'] as const;
+export type VoiceEngineId = (typeof VOICE_ENGINES)[number];
+
 export interface Titanfall2ConfigSection extends WorldSection {
   /** The Titanfall 2 install directory; empty finds the Steam copy. */
   gameDir: string;
@@ -28,6 +34,8 @@ export interface Titanfall2ConfigSection extends WorldSection {
     /** Keeps the game's sound playing. */
     sound: boolean;
   };
+  /** How readily the bot speaks and acts for the pilot unasked; the environment prompt carries the matching guidance. */
+  initiative: Initiative;
   intel: {
     /** Least time between two state snapshots in the context. */
     snapshotSec: number;
@@ -67,6 +75,10 @@ export interface Titanfall2ConfigSection extends WorldSection {
   };
   voice: {
     enabled: boolean;
+    /** What clones BT's voice from the sample: GPT-SoVITS (V5 turbo on NVIDIA GPUs, v2ProPlus on the CPU) or VoxCPM2. */
+    engine: VoiceEngineId;
+    /** GPT-SoVITS tier; `auto` takes the GPU tier when nvidia-smi lists an NVIDIA GPU. */
+    sovitsTier: 'auto' | 'cuda' | 'cpu';
     /** A running VoxCPM2 server; empty starts one from runtimeDir. */
     serverUrl: string;
     /** Directory holding llama-tts-server.exe; empty uses the newest llama.cpp-omni runtime. */
@@ -107,17 +119,20 @@ export const TITANFALL2_DEFAULTS: Titanfall2ConfigSection = {
   launchArgs: '-noOriginStartup -novid',
   display: { mode: 'borderless', resolution: '' },
   focus: { keepRunning: true, sound: true },
+  initiative: 'balanced',
   intel: { snapshotSec: 20, maxListed: 6, alertCooldownSec: 20, lowHealthPct: 35 },
   support: { missileCount: 6, autoMissileCooldownSec: 15, smokeCooldownSec: 20, pulseCooldownSec: 12, markCooldownSec: 5, markSec: 10 },
   story: { enabled: true, language: 'tchinese', simplified: true, frameSec: 30, frameMaxPx: 1280 },
   guide: { helmetNearM: 40 },
   voice: {
     enabled: true,
+    engine: 'gpt-sovits',
+    sovitsTier: 'auto',
     serverUrl: '',
     runtimeDir: '',
     modelsDir: '',
-    sampleAlias: 'diag_sp_Spoke0_BE331_18_01_mcor_bt',
-    sampleText: '铁驭，我已连接至你的头盔抬头显示以跟监进度。频道随时开启供你需要时使用。',
+    sampleAlias: 'diag_sp_aboveDome_BM121_03_01_mcor_bt',
+    sampleText: '这地方要崩塌了，建议我们尽快离开。你离我的位置不远。抬头显示有标记。',
     sampleLanguage: 'tchinese',
     volume: 1,
     outputDevice: '',
@@ -157,6 +172,7 @@ export function titanfall2ConfigGroups(language?: string): ConfigGroup[] {
         type: 'object',
         title: en ? 'Intel and support' : '情报与支援',
         properties: {
+          [`${K}.initiative`]: { type: 'string', enum: [...INITIATIVES], title: en ? 'Initiative' : '主动程度', description: en ? 'passive: speaks and acts when asked or in mortal danger; balanced: calls out what matters and steps in when the fight turns; active: fights alongside the pilot throughout.' : 'passive 被动：铁驭开口或要命时才说话出手;balanced 均衡：提醒要紧的，战况吃紧时主动出手;active 主动：全程配合作战。', 'x-hot': true },
           [`${K}.intel.snapshotSec`]: { type: 'integer', title: en ? 'Snapshot interval' : '快照间隔', minimum: 5, maximum: 300, [sec]: 's', 'x-hot': true },
           [`${K}.intel.maxListed`]: { type: 'integer', title: en ? 'Hostiles listed' : '快照列出的敌人', minimum: 0, maximum: 20, 'x-hot': true },
           [`${K}.intel.alertCooldownSec`]: { type: 'integer', title: en ? 'Alert spacing' : '同类警报间隔', minimum: 0, maximum: 300, [sec]: 's', 'x-hot': true },
@@ -194,6 +210,8 @@ export function titanfall2ConfigGroups(language?: string): ConfigGroup[] {
         title: en ? 'BT voice and subtitles' : 'BT 语音与字幕',
         properties: {
           [`${K}.voice.enabled`]: { type: 'boolean', title: en ? 'Voice' : '语音', 'x-hot': true },
+          [`${K}.voice.engine`]: { type: 'string', enum: [...VOICE_ENGINES], title: en ? 'Voice engine' : '语音引擎', description: en ? 'gpt-sovits: GPT-SoVITS V5 turbo on NVIDIA GPUs, v2ProPlus on the CPU; voxcpm2: VoxCPM2, NVIDIA GPUs only.' : 'gpt-sovits:GPT-SoVITS,N 卡用 V5 turbo、没有 N 卡用 CPU 跑 v2ProPlus;voxcpm2:VoxCPM2,只能用 N 卡。', 'x-hot': true },
+          [`${K}.voice.sovitsTier`]: { type: 'string', enum: ['auto', 'cuda', 'cpu'], title: en ? 'GPT-SoVITS tier' : 'GPT-SoVITS 推理档', description: en ? 'auto: the GPU tier when an NVIDIA GPU is found.' : 'auto:检测到 NVIDIA 显卡用显卡档，否则用 CPU 档。', 'x-hot': true },
           [`${K}.voice.serverUrl`]: { type: 'string', title: en ? 'VoxCPM2 server' : 'VoxCPM2 服务', description: en ? 'Empty: start llama-tts-server from the runtime directory.' : '留空时从运行时目录启动 llama-tts-server。', 'x-hot': true },
           [`${K}.voice.runtimeDir`]: { type: 'string', title: en ? 'Runtime directory' : '运行时目录', description: en ? 'Empty: the newest installed llama.cpp-omni runtime.' : '留空用已装的最新 llama.cpp-omni 运行时。', 'x-hot': true },
           [`${K}.voice.modelsDir`]: { type: 'string', title: en ? 'Model directory' : '模型目录', description: en ? 'Empty: <models>/vtuber.' : '留空即 <models>/vtuber。', 'x-hot': true },

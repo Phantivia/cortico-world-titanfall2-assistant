@@ -1,0 +1,182 @@
+/**
+ * 本机 GPT-SoVITS 推理服务：在运行时目录里以 `runtime/python.exe -I -X utf8 -u api_v2.py` 起子进程(`-I` 下环境变量不生效，编码与无缓冲只能走参数)，监听 127.0.0.1 的空闲端口。
+ * 启动方式与上游整合包的 go-webui.bat 一致(工作目录为运行时根,`runtime/` 在 PATH 最前)。
+ * 托管运行时的 `GPT_SoVITS/pretrained_models` 在启动前接成指向权重目录的目录联接;自备目录原样使用。
+ */
+import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { join, resolve } from 'node:path';
+import type { Logger } from 'cortico/core/types.ts';
+import { weightPaths, type ModelVersion, type Tier } from './catalog.ts';
+
+export interface ServerState {
+  phase: 'stopped' | 'starting' | 'ready' | 'error';
+  url: string | null;
+  pid: number | null;
+  /** 失败原因，或启动中最后一行输出。 */
+  detail: string | null;
+  /** 从启动到能接请求用了多少毫秒。 */
+  startMs: number | null;
+}
+
+export interface LaunchSpec {
+  runtimeDir: string;
+  /** 托管运行时给出权重目录;自备目录为 null。 */
+  weightsDir: string | null;
+  tier: Tier;
+  version: ModelVersion;
+  /** 生成的 api_v2 配置文件放在这里。 */
+  dataDir: string;
+}
+
+/** 首次加载要把几个模型读进内存,CPU 档慢的机器上要一两分钟。 */
+const READY_TIMEOUT_MS = 300_000;
+const POLL_MS = 500;
+const TAIL_LINES = 40;
+
+async function freePort(): Promise<number> {
+  return new Promise((done, fail) => {
+    const srv = createServer();
+    srv.once('error', fail);
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      srv.close(() => (addr && typeof addr === 'object' ? done(addr.port) : fail(new Error('拿不到空闲端口'))));
+    });
+  });
+}
+
+/** 让 `link` 成为指向 `target` 的目录联接;已是同一目标时不动。 */
+export function linkWeights(link: string, target: string): void {
+  mkdirSync(target, { recursive: true });
+  if (existsSync(link) || isLink(link)) {
+    if (isLink(link) && resolve(readlinkSync(link)) === resolve(target)) return;
+    rmSync(link, { recursive: !isLink(link), force: true });
+  }
+  symlinkSync(target, link, 'junction');
+}
+
+function isLink(path: string): boolean {
+  try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+}
+
+/** api_v2 读的配置：只用 `custom` 一节，路径相对运行时根。 */
+export function infererYaml(tier: Tier, version: ModelVersion): string {
+  const w = weightPaths(version);
+  return [
+    'custom:',
+    `  device: ${tier === 'cuda' ? 'cuda' : 'cpu'}`,
+    `  is_half: ${tier === 'cuda'}`,
+    `  version: ${version}`,
+    `  t2s_weights_path: ${w.t2s}`,
+    `  vits_weights_path: ${w.vits}`,
+    '  bert_base_path: GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large',
+    '  cnhuhbert_base_path: GPT_SoVITS/pretrained_models/chinese-hubert-base',
+    '',
+  ].join('\n');
+}
+
+export class SovitsServer {
+  private child: ChildProcess | null = null;
+  private st: ServerState = { phase: 'stopped', url: null, pid: null, detail: null, startMs: null };
+  private tail: string[] = [];
+  private starting: Promise<void> | null = null;
+
+  /** `onExit` 在子进程意外退出时调用，参数是失败原因。 */
+  constructor(private readonly log: Logger, private readonly onExit: (detail: string) => void = () => {}) {}
+
+  state(): ServerState {
+    return { ...this.st };
+  }
+
+  /** 最近的输出行，失败时给操作者看。 */
+  output(): string[] {
+    return [...this.tail];
+  }
+
+  start(spec: LaunchSpec): Promise<void> {
+    if (this.starting) return this.starting;
+    if (this.child) return Promise.resolve();
+    this.starting = this.launch(spec).finally(() => { this.starting = null; });
+    return this.starting;
+  }
+
+  async stop(): Promise<void> {
+    const child = this.child;
+    this.child = null;
+    this.st = { phase: 'stopped', url: null, pid: null, detail: null, startMs: null };
+    if (!child?.pid || child.exitCode !== null) return;
+    await new Promise<void>((done) => {
+      child.once('exit', () => done());
+      if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      else child.kill('SIGTERM');
+      setTimeout(done, 5000).unref();
+    });
+  }
+
+  private async launch(spec: LaunchSpec): Promise<void> {
+    const started = Date.now();
+    this.tail = [];
+    if (spec.weightsDir) linkWeights(join(spec.runtimeDir, 'GPT_SoVITS', 'pretrained_models'), spec.weightsDir);
+    mkdirSync(spec.dataDir, { recursive: true });
+    const yaml = join(spec.dataDir, `tts_infer.${spec.tier}.yaml`);
+    writeFileSync(yaml, infererYaml(spec.tier, spec.version));
+    const port = await freePort();
+    const url = `http://127.0.0.1:${port}`;
+    const runtimeBin = join(spec.runtimeDir, 'runtime');
+    const child = spawn(join(runtimeBin, 'python.exe'), ['-I', '-X', 'utf8', '-u', 'api_v2.py', '-a', '127.0.0.1', '-p', String(port), '-c', yaml], {
+      cwd: spec.runtimeDir,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: `${runtimeBin};${process.env.PATH ?? ''}` },
+    });
+    this.child = child;
+    this.st = { phase: 'starting', url, pid: child.pid ?? null, detail: null, startMs: null };
+    const onLine = (chunk: Buffer) => {
+      for (const line of chunk.toString('utf8').split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        this.tail.push(line);
+        if (this.tail.length > TAIL_LINES) this.tail.shift();
+        if (this.st.phase === 'starting') this.st.detail = line.slice(0, 200);
+      }
+    };
+    child.stdout!.on('data', onLine);
+    child.stderr!.on('data', onLine);
+    child.on('exit', (code) => {
+      if (this.child !== child) return;
+      this.child = null;
+      const last = this.tail.slice(-3).join(' | ');
+      this.st = { phase: 'error', url: null, pid: null, detail: `推理服务退出(${code}):${last}`, startMs: null };
+      this.log.warn('GPT-SoVITS 推理服务退出', { code, tail: this.tail.slice(-10) });
+      this.onExit(this.st.detail ?? '');
+    });
+    child.on('error', (err) => {
+      if (this.child !== child) return;
+      this.child = null;
+      this.st = { phase: 'error', url: null, pid: null, detail: err.message, startMs: null };
+    });
+    while (this.child === child && Date.now() - started < READY_TIMEOUT_MS) {
+      if (await answers(url)) {
+        this.st = { phase: 'ready', url, pid: child.pid ?? null, detail: null, startMs: Date.now() - started };
+        this.log.info('GPT-SoVITS 推理服务就绪', { url, tier: spec.tier, version: spec.version, ms: this.st.startMs });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+    if (this.child === child) {
+      await this.stop();
+      this.st = { phase: 'error', url: null, pid: null, detail: `推理服务 ${READY_TIMEOUT_MS / 1000} 秒内没有就绪`, startMs: null };
+    }
+  }
+}
+
+/** api_v2 起来之前连接被拒;FastAPI 的 /docs 页起来就有。 */
+async function answers(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${url}/docs`, { signal: AbortSignal.timeout(2000) });
+    await res.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
+}

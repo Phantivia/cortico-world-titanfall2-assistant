@@ -7,7 +7,8 @@ Owner: `src/definition.ts`
 - 跟着剧情台词和游戏画面走。
 - 给出地图导引：目标点、头盔收集品、BT 装备、电池。
 - 替 BT 出手：多目标飞弹、电烟幕、声纳、隔墙标记、集火。
-- 说话时显示游戏里 BT 的字幕，用 VoxCPM2 复刻的 BT 声音念出来。
+- 说话时显示游戏里 BT 的字幕，用 GPT-SoVITS(或 VoxCPM2)复刻的 BT 声音念出来，口吻是游戏里的 BT。
+- 主动程度分被动、均衡、主动三档，玩家随时可调。
 
 ```
 游戏(Northstar + 本包的模组 mod/Cortico.Titanfall2Assistant)
@@ -22,10 +23,10 @@ Owner: `src/definition.ts`
 - Windows,Node.js 22+。
 - 自备泰坦陨落 2,装好并登录 EA App(Steam 版也通过它登录)。
 - [Northstar](https://github.com/R2Northstar/Northstar/releases):没装时一键开始会下载 v1.31.14 装进游戏目录。
-- BT 语音要 NVIDIA 显卡和两样文件，缺了面板上可以下载(共约 5.6 GB),放在 vtuber 扩展用的同一位置，两个扩展共用：
-  - llama.cpp-omni 运行时(`llama-tts-server.exe`),装在 `<运行时根>/llama.cpp-omni/`。
-  - VoxCPM2 模型文件 `VoxCPM2-BaseLM-F16.gguf` 和 `VoxCPM2-Acoustic-F16.gguf`,在 `<模型根>/vtuber/`。
-- 截样片要 PATH 上有 ffmpeg,版本需带 binka 解复用器(2021 年以后的版本都有)。
+- BT 语音的运行时和模型，缺了在面板上下载。两种引擎(配置 `voice.engine`):
+  - GPT-SoVITS(默认):NVIDIA 显卡用 V5 turbo,没有就用 CPU 跑 v2ProPlus(配置 `voice.sovitsTier`)。运行时与权重和 cortico-world-gpt-sovits-for-coopanion 用同一套钉住的文件、同一个目录(`<运行时根>/gpt-sovits/`、`<模型根>/gpt-sovits/`),两个扩展共用;先从魔搭下载，下不动再走 GitHub / Hugging Face。显卡档约 6 GB,CPU 档约 2.5 GB。
+  - VoxCPM2:只能用 NVIDIA 显卡。llama.cpp-omni 运行时在 `<运行时根>/llama.cpp-omni/`,模型在 `<模型根>/vtuber/`,和 vtuber 扩展共用，约 5.6 GB。
+- 截 BT 样片不需要 ffmpeg:`src/binka.ts` 是 FFmpeg Bink Audio 解码器的移植，结果与 ffmpeg 相差不超过 PCM16 的一级。
 
 ## 安装与启动
 
@@ -41,8 +42,8 @@ Owner: `src/definition.ts`
 1. 游戏目录里没有 Northstar 时，下载 v1.31.14 解到游戏目录。
 2. 安装或更新模组。
 3. EA App 没在运行时先启动它，等它的 LSX 端口(127.0.0.1:3216)打开后再等 15 秒让它登录。
-4. 在后台启动 BT 语音：从游戏的 `r2/sound` 截出样片台词，启动 VoxCPM2 服务。
-5. 把「画面与切窗」页签的显示模式和分辨率写进游戏的 `videoconfig.txt`。
+4. 在后台启动 BT 语音：从游戏的 `r2/sound` 截出样片台词，启动选定引擎的推理服务。
+5. 把「画面与切窗」页签的显示模式和分辨率写进游戏的 `videoconfig.txt`;游戏从没运行过、还没有这个文件时，新建一份只含显示设置的(其余画质游戏按默认补上)。
 6. 用 `NorthstarLauncher.exe -allowlocalhttp <参数> +cortico_tf2_port <port>` 启动游戏，窗口出现后恢复并切到前台。游戏停在主菜单，玩家选「继续」或「任务选择」进入战役。
 
 「画面与切窗」页签(配置项 `display.*`、`focus.*`、`launchArgs`)管这些，启动命令的预览也在这一页：
@@ -56,6 +57,8 @@ Owner: `src/definition.ts`
 
 几点说明：
 - EA App 没登录完游戏就会弹出 `#ORIGIN_LOGGED_OUT`,点确定后退出;游戏在启动 90 秒内没进关卡就退出时，面板写明这个原因。
+- Northstar 第一次进主菜单会问要不要用 EA 令牌登录它的主服务器(`profile.cfg` 的 `ns_has_agreed_to_send_token` 为 0 时)。单人用不到，选「否」;问之前面板上一直有这条提示。
+- 从 Steam 或 EA App 直接启动的是原版(`Titanfall2.exe` 里没有 `Northstar.dll`),模组不会加载。World 连续两次检查到这种进程就推一条状态事件给 Coo,面板写「从 Steam 启动的是原版，请用一键开始」;这时点一键开始也给同样的提示。
 - BT 语音不随 World 启动：一键开始或有关卡连上时才启动，World 开着不玩游戏时不占显存。
 - 暂停菜单、读图和过场时模组不上报;停止上报超过 10 秒，World 会推一条状态事件。
 
@@ -130,9 +133,11 @@ Owner: `src/definition.ts`
 
 ## BT 的声音与字幕
 
-样片默认是 `diag_sp_Spoke0_BE331_18_01_mcor_bt`,国语，6.2 秒，原文是「铁驭，我已连接至你的头盔抬头显示以跟监进度。频道随时开启供你需要时使用。」
+样片默认是 `diag_sp_aboveDome_BM121_03_01_mcor_bt`,国语，5.8 秒，原文是「这地方要崩塌了，建议我们尽快离开。你离我的位置不远。抬头显示有标记。」(Whisper 转写核对过)。换样片前先用 GPT-SoVITS 试一句：有的 BT 台词当参考时它很快就停，只出零点几秒，比如原先的默认样片 `diag_sp_Spoke0_BE331_18_01_mcor_bt`。
 
-截取方式：`src/sample.ts` 读 `general.mbnk`,找到这条台词在 `general_<语言>.mstr` 里的位置，拼出 Bink Audio 交给 ffmpeg 解码，存成部署数据目录下的 `titanfall2-bt-sample.wav`。样片不随包分发。
+截取方式：`src/sample.ts` 读 `general.mbnk`,找到这条台词在 `general_<语言>.mstr` 里的位置，拼出 Bink Audio,由 `src/binka.ts` 解码，存成部署数据目录下的 `titanfall2-bt-sample.wav`。样片不随包分发。两种引擎都用它作参考音频、`voice.sampleText` 作逐字稿;GPT-SoVITS 要求参考音频 3–10 秒。
+
+GPT-SoVITS 按 api_v2 的 `/tts` 流式请求，一次只发一句(它只有一条推理管线);服务起来后先合成一句短话预热。
 
 要换样片，改 `voice.sampleAlias` 和 `voice.sampleText`,逐字稿要和音频一致。
 
@@ -147,6 +152,15 @@ Owner: `src/definition.ts`
 - 语音没就绪时只出字幕。
 - `titanfall2_say` 在第一页出声时返回。Cortico 按顺序执行同一次回复里的工具调用，所以紧跟在它后面的调用(比如桌宠气泡)和 BT 开口同时发生。
 - 游戏暂停或读图时字幕送不进去，声音照样播出;回执写明这句已经说出口，免得 Coo 重说。
+
+## 主动程度与口吻
+
+配置 `initiative`(快速启动页签和配置页签都能改)分三档，对应的要求作为 `{{titanfall2.initiative}}` 写进环境提示词(`src/initiative.ts`):
+- 被动：铁驭开口或下令才说话、出手，只有要命的时候主动提醒。
+- 均衡(默认):提醒要紧的威胁，战况吃紧时主动用飞弹、烟幕或声纳帮一把。
+- 主动：全程配合作战，主动开火、放烟幕、标记，脱战后报下一步。
+
+运行中改档位，World 立刻推一条状态事件把新要求告诉 Coo,不用等系统前缀重载。口吻按游戏里的 BT-7274:称呼「铁驭」,先结论后数据，用游戏里的说法，方位报钟点和米。
 
 ## 开发
 

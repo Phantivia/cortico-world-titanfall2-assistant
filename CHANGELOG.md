@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- BT 语音新增 GPT-SoVITS 引擎并设为默认：NVIDIA 显卡用 V5 turbo,没有就用 CPU 跑 v2ProPlus;运行时与权重和 cortico-world-gpt-sovits-for-coopanion 共用，先从魔搭下载。VoxCPM2 保留，配置 `voice.engine` 切换。
+- 默认样片换成 `diag_sp_aboveDome_BM121_03_01_mcor_bt`:原先那句当 GPT-SoVITS 的参考时只能合成零点几秒。
+- 截 BT 样片不再需要 ffmpeg:内置 FFmpeg Bink Audio 解码器的移植(`src/binka.ts`,LGPL-2.1-or-later)。
+- 游戏从没运行过、还没有 `videoconfig.txt` 时，一键开始先新建一份只含显示设置的，第一次启动就是无边框窗口。
+- 面板提示 Northstar 第一次进主菜单的登录对话框(选「否」);游戏从 Steam 直接启动成原版时，面板和 Coo 都会说「从 Steam 启动的是原版，请用一键开始」。
+- 主动程度三档(被动、均衡、主动)写进环境提示词，快速启动页签和配置页签都能改，运行中改了立刻告诉 Coo;播报口吻按游戏里的 BT。
+
 ## 0.3.0
 
 - 新页签「画面与切窗」:显示模式(无边框窗口、窗口、全屏、保持游戏里的设置)、分辨率(列出主屏支持的)、切到别的窗口时是否继续运行和保留声音、其他启动参数，带启动命令预览。

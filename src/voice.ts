@@ -23,6 +23,47 @@ const SYNTH_TIMEOUT_MS = 60_000;
 
 export type VoicePhase = 'off' | 'starting' | 'ready' | 'error';
 
+/** A voice BT speaks with: VoxCPM2 (`Voice`) or GPT-SoVITS (`SovitsVoice`); both clone the sample cut from the game. */
+export interface VoiceEngine {
+  readonly phase: VoicePhase;
+  readonly detail: string | null;
+  /** Starts the server and prepares the sample; resolves when a line can be synthesized. */
+  start(): Promise<void>;
+  stop(): void;
+  synth(text: string, signal?: AbortSignal): Promise<Pcm>;
+  /** Cuts the sample again from the game even when one is kept. */
+  refreshSample(): Promise<{ file: string; durationMs: number }>;
+}
+
+export interface SampleSource {
+  cfg: () => VoiceConfig;
+  /** The game directory the sample is cut from; null when unknown. */
+  gameDir: () => string | null;
+  /** Where the cut sample is kept; a `.json` beside it records alias and language. */
+  sampleFile: string;
+  log: Logger;
+}
+
+/** Cuts the configured line from the game into `sampleFile` unless the kept one is the same line; true when it cut. */
+export async function ensureSample(o: SampleSource, force: boolean): Promise<boolean> {
+  const cfg = o.cfg();
+  const key = `${cfg.sampleAlias}|${cfg.sampleLanguage}`;
+  const metaFile = `${o.sampleFile}.json`;
+  let kept = '';
+  try {
+    kept = (JSON.parse(readFileSync(metaFile, 'utf8')) as { key?: string }).key ?? '';
+  } catch {
+    // no sample cut yet
+  }
+  if (!force && kept === key && existsSync(o.sampleFile)) return false;
+  const gameDir = o.gameDir();
+  if (!gameDir) throw new Error('game directory unknown: the voice sample is cut from the installed game');
+  await extractSample(gameDir, cfg.sampleAlias, cfg.sampleLanguage, o.sampleFile);
+  writeFileSync(metaFile, JSON.stringify({ key }));
+  o.log.info('BT 语音样片已从游戏截取', { alias: cfg.sampleAlias, file: o.sampleFile });
+  return true;
+}
+
 export interface Pcm {
   pcm: Buffer;
   sampleRate: number;
@@ -99,19 +140,14 @@ export function voiceDirs(cfg: VoiceConfig, runtimesRoot: string, modelsRoot: st
   return { runtimeDir: cfg.runtimeDir.trim() || findRuntime(runtimesRoot), modelsDir: cfg.modelsDir.trim() || join(modelsRoot, 'vtuber') };
 }
 
-export interface VoiceOptions {
-  cfg: () => VoiceConfig;
-  /** The game directory the sample is cut from; null when unknown. */
-  gameDir: () => string | null;
-  /** Where the cut sample is kept; a `.json` beside it records alias and language. */
-  sampleFile: string;
+export interface VoiceOptions extends SampleSource {
   runtimesRoot: string;
   modelsRoot: string;
-  log: Logger;
   onPhase: (phase: VoicePhase, detail: string | null) => void;
 }
 
-export class Voice {
+/** VoxCPM2 through llama-tts-server. */
+export class Voice implements VoiceEngine {
   phase: VoicePhase = 'off';
   detail: string | null = null;
   private proc: ChildProcess | null = null;
@@ -194,22 +230,7 @@ export class Voice {
   }
 
   private async ensureSample(force: boolean): Promise<void> {
-    const cfg = this.opts.cfg();
-    const key = `${cfg.sampleAlias}|${cfg.sampleLanguage}`;
-    const metaFile = `${this.opts.sampleFile}.json`;
-    let kept = '';
-    try {
-      kept = (JSON.parse(readFileSync(metaFile, 'utf8')) as { key?: string }).key ?? '';
-    } catch {
-      // no sample cut yet
-    }
-    if (!force && kept === key && existsSync(this.opts.sampleFile)) return;
-    const gameDir = this.opts.gameDir();
-    if (!gameDir) throw new Error('game directory unknown: the voice sample is cut from the installed game');
-    await extractSample(gameDir, cfg.sampleAlias, cfg.sampleLanguage, this.opts.sampleFile);
-    writeFileSync(metaFile, JSON.stringify({ key }));
-    this.sample = null;
-    this.opts.log.info('BT 语音样片已从游戏截取', { alias: cfg.sampleAlias, file: this.opts.sampleFile });
+    if (await ensureSample(this.opts, force)) this.sample = null;
   }
 
   private async sampleB64(): Promise<string> {

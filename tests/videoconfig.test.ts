@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TITANFALL2_DEFAULTS } from '../src/config.ts';
-import { parseDisplay, parseResolution, targetDisplay, withDisplay } from '../src/videoconfig.ts';
+import { newDisplayFile, parseDisplay, parseResolution, targetDisplay, withDisplay } from '../src/videoconfig.ts';
 
 /** The shape the game writes: tab-separated quoted pairs, CRLF line ends. */
 const FILE = [
@@ -42,6 +42,16 @@ describe('game video config', () => {
     expect(targetDisplay({ ...cfg, mode: 'fullscreen', resolution: '1920x1200' }, current, SCREEN)).toEqual({ fullscreen: true, borderless: false, width: 1920, height: 1200 });
     expect(targetDisplay({ ...cfg, mode: 'windowed' }, current, SCREEN)).toEqual({ fullscreen: false, borderless: false, width: 1680, height: 1050 });
     expect(targetDisplay({ ...cfg, mode: 'game' }, current, SCREEN)).toBeNull();
+  });
+
+  it('writes a file the game has not created yet with the display settings alone', () => {
+    const cfg = TITANFALL2_DEFAULTS.display;
+    const target = targetDisplay({ ...cfg, mode: 'borderless' }, null, SCREEN)!;
+    const text = newDisplayFile(target);
+    expect(parseDisplay(text)).toEqual(target);
+    expect(text).toContain('"setting.configversion"');
+    expect(text.split('\r\n')[0]).toBe('"VideoConfig"');
+    expect(targetDisplay({ ...cfg, mode: 'windowed' }, null, SCREEN)).toMatchObject({ width: 1280, height: 720 });
   });
 
   it('accepts the resolution forms people type', () => {

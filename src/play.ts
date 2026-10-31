@@ -9,7 +9,7 @@
  */
 import type { Logger } from 'cortico/core/types.ts';
 import type { Progress } from './download.ts';
-import { checkGame, eaAppPath, eaAppRunning, eaLsxListening, installMod, installNorthstar, launchGame, runningGame, startEaApp } from './game.ts';
+import { checkGame, eaAppPath, eaAppRunning, eaLsxListening, installMod, installNorthstar, launchGame, runningGame, startEaApp, vanillaGame } from './game.ts';
 
 export type PlayStep = 'idle' | 'northstar' | 'mod' | 'ea' | 'launch' | 'menu' | 'playing' | 'error';
 
@@ -47,6 +47,8 @@ const EARLY_EXIT_MS = 90_000;
 const WATCH_MS = 2000;
 
 export const MENU_HINT = '游戏已打开：在主菜单选「继续」或「任务选择」进入战役。';
+/** Said when Titanfall2.exe runs without Northstar, where the mod never loads. */
+export const VANILLA_TEXT = '从 Steam 启动的是原版，请用一键开始：先关掉游戏，再点一键开始。';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -90,6 +92,7 @@ export class Play {
     if (!dir) throw new Error('没找到泰坦陨落 2:Steam 里装的会自动找到，装在别处的在「游戏目录」里填写。');
 
     if ((await runningGame()).length) {
+      if ((await vanillaGame()).length) throw new Error(VANILLA_TEXT);
       d.startVoice();
       await d.focus();
       return d.linked() ? this.set('playing', '游戏已连上。') : this.set('menu', MENU_HINT);

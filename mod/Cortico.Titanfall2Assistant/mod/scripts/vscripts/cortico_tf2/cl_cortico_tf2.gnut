@@ -2,9 +2,12 @@
 //
 // Polls http://127.0.0.1:<cortico_tf2_port>/client. A reply may carry a subtitle (lines already
 // wrapped by the sidecar, its duration and style) and string tokens to localize; the next poll
-// returns the localized strings and the current objective in the game's language.
+// returns the localized strings, the current objective in the game's language, and the dialogue lines
+// that started since. CorticoTF2_OnDialogue is called from sp/sh_sp_dialogue.gnut, which the World
+// installs as a patched copy of the game's own file.
 
 global function CorticoTF2_ClientInit
+global function CorticoTF2_OnDialogue
 
 const float POLL_SEC = 0.15
 const float REQUEST_STALE_SEC = 5.0
@@ -15,8 +18,11 @@ struct
 	bool inFlight = false
 	float sentAt = 0.0
 	array<var> ruis
+	var boxRui = null
+	var boxTopo = null
 	float hideAt = 0.0
 	table localized = {}
+	array dialogue = []
 } file
 
 void function CorticoTF2_ClientInit()
@@ -41,6 +47,8 @@ void function PollThread()
 		body.subtitle <- file.ruis.len() > 0
 		body.localized <- file.localized
 		file.localized = {}
+		body.dialogue <- file.dialogue
+		file.dialogue = []
 
 		file.inFlight = true
 		file.sentAt = Time()
@@ -50,6 +58,22 @@ void function PollThread()
 				file.inFlight = false
 			} )
 	}
+}
+
+void function CorticoTF2_OnDialogue( string alias, entity speaker )
+{
+	entity player = GetLocalClientPlayer()
+	string who = ""
+	if ( IsValid( speaker ) && IsValid( player ) )
+	{
+		if ( speaker == player )
+			who = "pilot"
+		else
+			who = speaker.GetClassName()
+	}
+	file.dialogue.append( { alias = alias, speaker = who, time = Time() } )
+	while ( file.dialogue.len() > 32 )
+		file.dialogue.remove( 0 )
 }
 
 string function ObjectiveText()
@@ -90,7 +114,10 @@ void function OnReply( HttpRequestResponse response )
 }
 
 // The text RUI the campaign uses for helmet readouts; every line is its own RUI at the same
-// position, stacked by lineNum.
+// position, stacked by lineNum. Behind the text a screen_fade RUI on a plane covering only the text
+// block draws the translucent box the game's own subtitles have. msgPos is the first line's centre
+// as an offset from the screen centre in screen fractions; the sidecar sends the block's width in
+// font-size units so the box fits the longest line.
 void function ShowSubtitle( table sub )
 {
 	HideSubtitle()
@@ -101,9 +128,26 @@ void function ShowSubtitle( table sub )
 	vector msgColor = < AsFloat( color[0] ), AsFloat( color[1] ), AsFloat( color[2] ) >
 	float size = AsFloat( sub.size )
 	float alpha = AsFloat( sub.alpha )
+
+	if ( "box" in sub )
+	{
+		table box = expect table( sub.box )
+		float[2] screen = GetScreenSize()
+		float unit = size * screen[1] / 1080.0
+		float lineH = unit * AsFloat( box.lineHeight )
+		float w = unit * AsFloat( box.width ) + unit * AsFloat( box.padX ) * 2.0
+		float h = lineH * lines.len() + unit * AsFloat( box.padY ) * 2.0
+		float cx = screen[0] * ( 0.5 + msgPos.x )
+		float top = screen[1] * ( 0.5 + msgPos.y ) - lineH * 0.5 - unit * AsFloat( box.padY )
+		file.boxTopo = RuiTopology_CreatePlane( < cx - w * 0.5, top, 0.0 >, < w, 0.0, 0.0 >, < 0.0, h, 0.0 >, false )
+		file.boxRui = RuiCreate( $"ui/screen_fade.rpak", file.boxTopo, RUI_DRAW_HUD, 0 )
+		RuiSetFloat3( file.boxRui, "fadeColor", < 0.0, 0.0, 0.0 > )
+		RuiSetFloat( file.boxRui, "fadeAlpha", AsFloat( box.alpha ) )
+	}
+
 	for ( int i = 0; i < lines.len(); i++ )
 	{
-		var rui = RuiCreate( $"ui/cockpit_console_text_center.rpak", clGlobal.topoFullScreen, RUI_DRAW_HUD, 0 )
+		var rui = RuiCreate( $"ui/cockpit_console_text_center.rpak", clGlobal.topoFullScreen, RUI_DRAW_HUD, 1 )
 		RuiSetInt( rui, "maxLines", lines.len() )
 		RuiSetInt( rui, "lineNum", i )
 		RuiSetFloat2( rui, "msgPos", msgPos )
@@ -122,4 +166,10 @@ void function HideSubtitle()
 	foreach ( var rui in file.ruis )
 		RuiDestroyIfAlive( rui )
 	file.ruis.clear()
+	if ( file.boxRui != null )
+		RuiDestroyIfAlive( file.boxRui )
+	file.boxRui = null
+	if ( file.boxTopo != null )
+		RuiTopology_Destroy( file.boxTopo )
+	file.boxTopo = null
 }

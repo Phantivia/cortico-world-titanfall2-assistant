@@ -28,6 +28,25 @@ export interface Titanfall2ConfigSection extends WorldSection {
     autoMissileCooldownSec: number;
     smokeCooldownSec: number;
     pulseCooldownSec: number;
+    markCooldownSec: number;
+    /** How long marked hostiles stay outlined. */
+    markSec: number;
+  };
+  story: {
+    /** Campaign dialogue reaches the context as it plays. */
+    enabled: boolean;
+    /** Text language of the game: resource/subtitles_<language>.dat. */
+    language: string;
+    /** Write dialogue in simplified Chinese. */
+    simplified: boolean;
+    /** Least time between two game frames attached to story events; 0 attaches none. */
+    frameSec: number;
+    /** Long edge of attached game frames. */
+    frameMaxPx: number;
+  };
+  guide: {
+    /** A pilot helmet within this distance is announced once. */
+    helmetNearM: number;
   };
   voice: {
     enabled: boolean;
@@ -57,6 +76,10 @@ export interface Titanfall2ConfigSection extends WorldSection {
     charsPerLine: number;
     /** Shortest time a subtitle stays when there is no voice. */
     minSec: number;
+    /** Show subtitles in traditional characters: the game's CJK font has only those. */
+    traditional: boolean;
+    /** Opacity of the box behind the subtitle; 0 draws none. */
+    boxAlpha: number;
   };
 }
 
@@ -66,7 +89,9 @@ export const TITANFALL2_DEFAULTS: Titanfall2ConfigSection = {
   port: 27941,
   launchArgs: '-noOriginStartup',
   intel: { snapshotSec: 20, maxListed: 6, alertCooldownSec: 20, lowHealthPct: 35 },
-  support: { missileCount: 6, autoMissileCooldownSec: 15, smokeCooldownSec: 20, pulseCooldownSec: 12 },
+  support: { missileCount: 6, autoMissileCooldownSec: 15, smokeCooldownSec: 20, pulseCooldownSec: 12, markCooldownSec: 5, markSec: 10 },
+  story: { enabled: true, language: 'tchinese', simplified: true, frameSec: 30, frameMaxPx: 1280 },
+  guide: { helmetNearM: 40 },
   voice: {
     enabled: true,
     serverUrl: '',
@@ -79,7 +104,7 @@ export const TITANFALL2_DEFAULTS: Titanfall2ConfigSection = {
     outputDevice: '',
     inferenceTimesteps: 10,
   },
-  subtitle: { size: 34, posX: 0, posY: 0.36, charsPerLine: 26, minSec: 3 },
+  subtitle: { size: 30, posX: 0, posY: -0.42, charsPerLine: 26, minSec: 3, traditional: true, boxAlpha: 0.5 },
 };
 
 const K = `worlds.${TITANFALL2_ID}`;
@@ -117,6 +142,24 @@ export function titanfall2ConfigGroups(language?: string): ConfigGroup[] {
           [`${K}.support.autoMissileCooldownSec`]: { type: 'integer', title: en ? 'Missile cooldown (BT on its own)' : '飞弹冷却(BT 单独作战)', minimum: 0, maximum: 120, [sec]: 's', 'x-hot': true },
           [`${K}.support.smokeCooldownSec`]: { type: 'integer', title: en ? 'Smoke cooldown' : '电烟幕冷却', minimum: 0, maximum: 120, [sec]: 's', 'x-hot': true },
           [`${K}.support.pulseCooldownSec`]: { type: 'integer', title: en ? 'Sonar cooldown' : '声纳冷却', minimum: 0, maximum: 120, [sec]: 's', 'x-hot': true },
+          [`${K}.support.markCooldownSec`]: { type: 'integer', title: en ? 'Mark cooldown' : '标记冷却', minimum: 0, maximum: 120, [sec]: 's', 'x-hot': true },
+          [`${K}.support.markSec`]: { type: 'integer', title: en ? 'Mark duration' : '标记持续', minimum: 2, maximum: 60, [sec]: 's', 'x-hot': true },
+          [`${K}.guide.helmetNearM`]: { type: 'integer', title: en ? 'Helmet call-out distance' : '头盔提示距离', minimum: 0, maximum: 200, [sec]: 'm', 'x-hot': true },
+        },
+      },
+    },
+    {
+      id: `${id}:story`,
+      owner: id,
+      schema: {
+        type: 'object',
+        title: en ? 'Story' : '剧情',
+        properties: {
+          [`${K}.story.enabled`]: { type: 'boolean', title: en ? 'Campaign dialogue' : '剧情台词', 'x-hot': true },
+          [`${K}.story.language`]: { type: 'string', title: en ? 'Game text language' : '游戏文字语言', description: en ? 'resource/subtitles_<language>.dat, e.g. tchinese, english.' : '游戏的字幕语言，如 tchinese、english。', 'x-hot': true },
+          [`${K}.story.simplified`]: { type: 'boolean', title: en ? 'Simplified Chinese' : '转成简体', 'x-hot': true },
+          [`${K}.story.frameSec`]: { type: 'integer', title: en ? 'Game frame interval' : '附画面间隔', minimum: 0, maximum: 600, [sec]: 's', description: en ? 'Least time between two game frames attached to story events; 0 attaches none.' : '剧情事件附游戏画面的最短间隔;0 不附。', 'x-hot': true },
+          [`${K}.story.frameMaxPx`]: { type: 'integer', title: en ? 'Frame width' : '画面宽度', minimum: 480, maximum: 1920, [sec]: 'px', 'x-hot': true },
         },
       },
     },
@@ -142,6 +185,8 @@ export function titanfall2ConfigGroups(language?: string): ConfigGroup[] {
           [`${K}.subtitle.posY`]: { type: 'number', title: en ? 'Subtitle Y' : '字幕纵向位置', minimum: -1, maximum: 1, 'x-hot': true },
           [`${K}.subtitle.charsPerLine`]: { type: 'integer', title: en ? 'Characters per line' : '每行字数', minimum: 8, maximum: 60, 'x-hot': true },
           [`${K}.subtitle.minSec`]: { type: 'number', title: en ? 'Shortest subtitle' : '字幕最短停留', minimum: 1, maximum: 20, [sec]: 's', 'x-hot': true },
+          [`${K}.subtitle.traditional`]: { type: 'boolean', title: en ? 'Traditional characters' : '字幕用繁体', description: en ? 'The game\'s Chinese font has traditional characters only.' : '游戏的中文字体只有繁体字。', 'x-hot': true },
+          [`${K}.subtitle.boxAlpha`]: { type: 'number', title: en ? 'Subtitle box opacity' : '字幕底框不透明度', minimum: 0, maximum: 1, 'x-hot': true },
         },
       },
     },

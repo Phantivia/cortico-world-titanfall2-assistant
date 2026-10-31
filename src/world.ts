@@ -6,6 +6,8 @@
  * commands and subtitles back through the child. Game state reaches the context three ways:
  * edge alerts pushed when they happen, a snapshot rendered from the newest frame at delivery
  * (piggyback, only the parts that changed since the last one), and `titanfall2_scan` on demand.
+ * Campaign dialogue arrives through a hook the World patches into the game's dialogue script
+ * (story.ts); it is queued and rendered at delivery with a game frame read at that moment.
  * BT's voice is VoxCPM2 cloned from a line cut out of the installed game (voice.ts).
  */
 import { fork, type ChildProcess } from 'node:child_process';
@@ -16,16 +18,18 @@ import { childExecArgv } from 'cortico/extensions/runtime.ts';
 import type { EventTag, Logger, ToolDef, ToolOutcome, TriggerMode, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
 import type { Language } from 'cortico/core/language.ts';
 import { nowIso } from 'cortico/core/util.ts';
+import * as OpenCC from 'opencc-js';
 import { TITANFALL2_ID, titanfall2ConfigGroups, type Titanfall2ConfigSection } from './config.ts';
-import type { ChildToMain, EngineNotice, EngineRequest, Frame } from './engine-ipc.ts';
+import type { CaptureResult, ChildToMain, EngineNotice, EngineRequest, Frame } from './engine-ipc.ts';
 import { checkGame, findGameDirs, installMod, launchGame, runningGame, type GameCheck } from './game.ts';
 import {
   Labels, btLine, className, enemiesBlock, enemyText, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
   type Lookup, type SeenEnemy,
 } from './intel.ts';
 import { Player } from './player.ts';
-import type { ClientPost, CommandAck, GameEvent, ServerCommand } from './protocol.ts';
-import { Speech } from './speech.ts';
+import type { ClientPost, CommandAck, GameEvent, PoiFrame, ServerCommand, SubtitleCommand } from './protocol.ts';
+import { Speech, width as textWidth } from './speech.ts';
+import { Captions } from './story.ts';
 import { TITANFALL2_TOOL_DECLS } from './tools.ts';
 import { Voice, type VoicePhase } from './voice.ts';
 
@@ -43,6 +47,28 @@ const COMBAT_END_MS = 10_000;
 const COMBAT_NEAR_M = 40;
 /** SONAR_PULSE_RADIUS of mp_titanability_sonar_pulse, in game units. */
 const PULSE_RADIUS_UNITS = 1250;
+const IMAGE_MIME = 'image/jpeg';
+const JPEG_QUALITY = 80;
+/** Lines kept for one story event; older ones are dropped when nothing delivers them. */
+const STORY_LINE_MAX = 40;
+/** Subtitle RUI metrics in font-size units, measured in game: a CJK character and a line. */
+const CHAR_UNIT = 0.76;
+const LINE_UNIT = 1.3;
+
+const toSimplified = OpenCC.Converter({ from: 'tw', to: 'cn' });
+const toTraditional = OpenCC.Converter({ from: 'cn', to: 'tw' });
+
+/** BT loadout pickups by their weapon: the loadout's name and its primary weapon. */
+const LOADOUT_NAMES: Record<string, string> = {
+  mp_titanweapon_xo16_shorty: 'Expedition(XO-16)',
+  mp_titanweapon_sticky_40mm: 'Tone(40mm 机炮)',
+  mp_titanweapon_meteor: 'Scorch(T-203 铝热剂发射器)',
+  mp_titanweapon_leadwall: 'Ronin(铅墙霰弹枪)',
+  mp_titanweapon_rocketeer_rocketstream: 'Brute(四联火箭)',
+  mp_titanweapon_particle_accelerator: 'Ion(分裂枪)',
+  mp_titanweapon_sniper: 'Northstar(电浆磁轨炮)',
+  mp_titanweapon_predator_cannon: 'Legion(猎杀者加农炮)',
+};
 
 type Args = Record<string, unknown>;
 
@@ -62,6 +88,7 @@ const FAIL_TEXT: Record<NonNullable<CommandAck['reason']>, string> = {
   cooldown: '还在冷却',
   charging: '飞弹系统充能不足',
   no_weapon: 'BT 手上没有武器',
+  embarked: '铁驭正在驾驶 BT,BT 的攻击由铁驭决定',
   unknown_op: '游戏里的模组不认识这个指令(模组版本不对)',
 };
 
@@ -103,7 +130,7 @@ export class Titanfall2World implements World {
   /* alert edges */
   private readonly lastAlertAt = new Map<string, number>();
   private readonly seenBig = new Set<number>();
-  private kills: Array<{ cls: string; by: string; boss?: string }> = [];
+  private kills: Array<{ cls: string; by: string; weapon: string; boss?: string }> = [];
   private killTimer: ReturnType<typeof setTimeout> | null = null;
   private inCombat = false;
   private quietSince: number | null = null;
@@ -113,6 +140,16 @@ export class Titanfall2World implements World {
   private lastSnapshotAt = 0;
   private lastAnchorAt = 0;
   private baseline: Map<string, string> | null = null;
+
+  /* story */
+  private captions: Captions | null = null;
+  private captionsKey = '';
+  private storyLines: string[] = [];
+  private storyArmed = false;
+  private lastFrameAt = 0;
+  /** Attach a frame to the next story event regardless of the interval (new level, new objective). */
+  private frameDue = true;
+  private readonly helmetsAnnounced = new Set<string>();
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private voice: Voice | null = null;
@@ -163,7 +200,7 @@ export class Titanfall2World implements World {
     if (dir) {
       try {
         const before = checkGame(dir);
-        if (before.northstar && (!before.modCurrent || !before.localHttp)) {
+        if (before.northstar && (!before.modCurrent || !before.localHttp || !before.dialogueHook)) {
           installMod(dir);
           log.info('模组已装进游戏', { dir });
         }
@@ -296,6 +333,8 @@ export class Titanfall2World implements World {
       this.map = frame.map;
       this.labels.reset();
       this.seenBig.clear();
+      this.helmetsAnnounced.clear();
+      this.frameDue = true;
       this.inCombat = false;
       this.baseline = null;
       if (!first || this.everUp) this.emit('titanfall2.state', `进入关卡 ${mapName(frame.map)}。`, 'flush');
@@ -318,8 +357,72 @@ export class Titanfall2World implements World {
     if (objective !== this.objective) {
       const had = this.objective;
       this.objective = objective;
-      if (objective && this.frame) this.emit('titanfall2.objective', `新目标:${objective}${had ? `(上一个目标是「${had}」)` : ''}。${this.objectiveWhere()}`, 'debounce');
+      if (objective && this.frame) {
+        this.frameDue = true;
+        this.emit('titanfall2.objective', `新目标:${objective}${had ? `(上一个目标是「${had}」)` : ''}。${this.objectiveWhere()}`, 'debounce');
+      }
     }
+    if (post.dialogue?.length && this.cfg.story.enabled) this.onDialogue(post.dialogue.map((d) => d.alias));
+  }
+
+  /* ---------- story ---------- */
+
+  private captionTable(): Captions | null {
+    const dir = this.gameDir();
+    const key = `${dir}|${this.cfg.story.language}`;
+    if (this.captionsKey !== key) {
+      this.captionsKey = key;
+      this.captions = null;
+      if (dir) {
+        try {
+          this.captions = Captions.load(dir, this.cfg.story.language);
+        } catch (err) {
+          this.log?.warn('读不到游戏字幕表', { err: String(err) });
+        }
+      }
+    }
+    return this.captions;
+  }
+
+  /** Queues the lines' captions and arms one deferred story event for them. */
+  private onDialogue(aliases: string[]): void {
+    const table = this.captionTable();
+    for (const alias of aliases) {
+      const cap = table?.get(alias);
+      if (!cap || !cap.text) continue;
+      const conv = (t: string): string => (this.cfg.story.simplified ? toSimplified(t) : t);
+      this.storyLines.push(cap.speaker ? `${conv(cap.speaker)}:${conv(cap.text)}` : conv(cap.text));
+    }
+    if (this.storyLines.length > STORY_LINE_MAX) this.storyLines.splice(0, this.storyLines.length - STORY_LINE_MAX);
+    if (!this.storyLines.length || this.storyArmed || !this.host) return;
+    this.storyArmed = true;
+    this.host.pushDeferred({ type: 'titanfall2.story', senderKey: this.id, render: () => this.renderStory() }, { trigger: 'debounce' });
+  }
+
+  private async renderStory(): Promise<string | { text: string; blobs: Array<{ bytes: Uint8Array; mime: string; name: string; fallbackText: string }> } | null> {
+    this.storyArmed = false;
+    const lines = this.storyLines.splice(0);
+    if (!lines.length) return null;
+    const text = `[泰坦陨落2 剧情] ${lines.join('\n')}`;
+    const due = this.frameDue || (this.cfg.story.frameSec > 0 && Date.now() - this.lastFrameAt >= this.cfg.story.frameSec * 1000);
+    if (!due || this.cfg.story.frameSec <= 0 || !this.acceptsImages()) return text;
+    const shot = await this.capture(this.cfg.story.frameMaxPx).catch(() => null);
+    if (!shot) return text;
+    this.frameDue = false;
+    this.lastFrameAt = Date.now();
+    return { text, blobs: [{ bytes: shot.jpeg, mime: IMAGE_MIME, name: 'titanfall2-story.jpg', fallbackText: `游戏画面 ${shot.width}×${shot.height}` }] };
+  }
+
+  private acceptsImages(): boolean {
+    try {
+      return this.host?.modelFacts.accepts(IMAGE_MIME) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  private capture(maxWidth: number): Promise<CaptureResult> {
+    return this.call<CaptureResult>({ op: 'capture', maxWidth, quality: JPEG_QUALITY }, 5000);
   }
 
   private objectiveWhere(): string {
@@ -373,6 +476,19 @@ export class Titanfall2World implements World {
       if (coreReady(bt) && !coreReady(pb)) this.emit('titanfall2.combat', 'BT 的核心能力充能完毕。', 'debounce');
     }
 
+    const near = this.cfg.guide.helmetNearM;
+    if (p && near > 0) {
+      for (const poi of cur.pois ?? []) {
+        if (poi.kind !== 'helmet') continue;
+        const key = poi.pos.map((v) => Math.round(v)).join(',');
+        if (this.helmetsAnnounced.has(key)) continue;
+        const r = relative(p.pos, p.yaw, poi.pos);
+        if (r.meters > near) continue;
+        this.helmetsAnnounced.add(key);
+        this.emit('titanfall2.guide', `附近有一个还没拿到的铁驭头盔收集品：在铁驭 ${whereText(r)}。`, 'piggyback');
+      }
+    }
+
     const engaging = list.filter((s) => s.e.target);
     const now = Date.now();
     if (engaging.length && !this.inCombat) {
@@ -417,7 +533,7 @@ export class Titanfall2World implements World {
       case 'disembark':
         return this.emit('titanfall2.combat', '铁驭离开了 BT。', 'debounce');
       case 'kill':
-        this.kills.push({ cls: e.cls, by: e.by, boss: e.boss });
+        this.kills.push({ cls: e.cls, by: e.by, weapon: e.weapon, boss: e.boss });
         this.killTimer ??= setTimeout(() => this.flushKills(), KILL_BATCH_MS);
         return;
     }
@@ -431,7 +547,9 @@ export class Titanfall2World implements World {
     const groups = new Map<string, number>();
     for (const k of kills) {
       const name = k.boss ?? className(k.cls);
-      const by = k.by === 'pilot' ? '铁驭' : k.by === 'bt' ? 'BT' : '其他';
+      // the game credits BT's kills to the pilot; titan weapons tell them apart
+      const titanWeapon = /^mp_titan(weapon|core|ability)_/.test(k.weapon);
+      const by = k.by === 'bt' || (k.by === 'pilot' && titanWeapon) ? 'BT' : k.by === 'pilot' ? '铁驭' : '其他';
       groups.set(`${name}(${by})`, (groups.get(`${name}(${by})`) ?? 0) + 1);
     }
     this.emit('titanfall2.combat', `击杀:${[...groups].map(([k, n]) => `${k}×${n}`).join('、')}。`, kills.some((k) => k.boss || k.cls === 'npc_titan') ? 'debounce' : 'piggyback');
@@ -503,6 +621,10 @@ export class Titanfall2World implements World {
       titanfall2_missiles: (a) => this.toolMissiles(a),
       titanfall2_smoke: () => this.toolSupport('smoke'),
       titanfall2_pulse: () => this.toolSupport('pulse'),
+      titanfall2_look: () => this.toolLook(),
+      titanfall2_guide: () => this.toolGuide(),
+      titanfall2_mark: (a) => this.toolMark(a),
+      titanfall2_focus: (a) => this.toolFocus(a),
     };
     return TITANFALL2_TOOL_DECLS.map((d) => ({ ...d, handler: (args) => handlers[d.name](args) }));
   }
@@ -530,7 +652,74 @@ export class Titanfall2World implements World {
     else if (only === 'titans') list = list.filter((s) => s.e.cls === 'npc_titan' || s.e.cls === 'npc_super_spectre');
     const head = [`关卡:${mapName(frame.map)}`, objectiveLine(frame, this.objective), pilotLine(frame, this.lookup), btLine(frame), this.readinessLine(frame)];
     const enemies = total === 0 ? '敌人:扫描范围内没有' : `敌人:范围内 ${total} 个${only !== 'all' ? `,其中符合「${only}」的 ${list.length} 个` : ''}\n${list.map((s) => `- ${enemyText(s)}`).join('\n')}`;
-    return `${head.join('\n')}\n${enemies}`;
+    const p = frame.player;
+    const threats = p ? (frame.threats ?? []).map((t) => `${t.weapon || t.cls} 在铁驭 ${whereText(relative(p.pos, p.yaw, t.pos))}`) : [];
+    return `${head.join('\n')}\n${enemies}${threats.length ? `\n飞来的弹药:${threats.join(';')}` : ''}`;
+  }
+
+  private async toolLook(): Promise<string | ToolOutcome> {
+    const frame = this.requireFrame();
+    const text = [`关卡:${mapName(frame.map)}`, objectiveLine(frame, this.objective)].join('\n');
+    try {
+      const shot = await this.capture(this.cfg.story.frameMaxPx);
+      this.lastFrameAt = Date.now();
+      return { text, blobs: [{ bytes: shot.jpeg, mime: IMAGE_MIME, name: 'titanfall2-look.jpg', fallbackText: `游戏画面 ${shot.width}×${shot.height}` }] };
+    } catch (err) {
+      return `${text}\n没有截到画面:${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  private poiText(frame: Frame, poi: PoiFrame): string {
+    const p = frame.player!;
+    const where = whereText(relative(p.pos, p.yaw, poi.pos));
+    return poi.kind === 'helmet' ? `铁驭头盔 ${where}` : `BT 装备 ${LOADOUT_NAMES[poi.weapon ?? ''] ?? poi.weapon} ${where}`;
+  }
+
+  private async toolGuide(): Promise<string> {
+    const frame = this.requireFrame();
+    const p = frame.player;
+    if (!p) throw new Error('还没有铁驭的读数');
+    const dist = (x: PoiFrame): number => relative(p.pos, p.yaw, x.pos).meters;
+    const pois = [...(frame.pois ?? [])].sort((a, b) => dist(a) - dist(b));
+    const helmets = pois.filter((x) => x.kind === 'helmet');
+    const loadouts = pois.filter((x) => x.kind === 'loadout');
+    const lines = [`关卡:${mapName(frame.map)}`, objectiveLine(frame, this.objective)];
+    if (frame.bt && !frame.bt.embarked) lines.push(`BT 在铁驭 ${whereText(relative(p.pos, p.yaw, frame.bt.pos))}`);
+    lines.push(helmets.length ? `这一关还没拿到的铁驭头盔 ${helmets.length} 个:\n${helmets.map((x) => `- ${this.poiText(frame, x)}`).join('\n')}` : '这一关没有还没拿到的铁驭头盔。');
+    if (loadouts.length) lines.push(`可拾取的 BT 装备:\n${loadouts.map((x) => `- ${this.poiText(frame, x)}`).join('\n')}`);
+    return lines.join('\n');
+  }
+
+  private targetIds(frame: Frame, raw: string[]): { ids: number[]; unknown: string[] } {
+    const ids: number[] = [];
+    const unknown: string[] = [];
+    for (const label of raw) {
+      const id = this.labels.idOf(label);
+      if (id === null || !frame.enemies?.some((e) => e.id === id)) unknown.push(label);
+      else ids.push(id);
+    }
+    return { ids, unknown };
+  }
+
+  private async toolMark(a: Args): Promise<string> {
+    const frame = this.requireFrame();
+    const raw = Array.isArray(a.targets) ? a.targets.map(String) : [];
+    const { ids, unknown } = this.targetIds(frame, raw);
+    if (!ids.length) throw new Error(`没有可用的目标:${unknown.join('、')} 不在当前扫描里。`);
+    const ack = await this.command({ op: 'mark', targets: ids, durationSec: this.cfg.support.markSec, cooldownSec: this.cfg.support.markCooldownSec });
+    if (!ack.ok) throw new Error(`没有标记:${FAIL_TEXT[ack.reason ?? 'unknown_op']}。`);
+    const marked = raw.filter((l) => !unknown.includes(l));
+    return `已把 ${marked.join('、')} 描边高亮 ${this.cfg.support.markSec} 秒，铁驭隔墙也看得见。${unknown.length ? `${unknown.join('、')} 不在当前扫描里。` : ''}`;
+  }
+
+  private async toolFocus(a: Args): Promise<string> {
+    const frame = this.requireFrame();
+    const label = typeof a.target === 'string' ? a.target : '';
+    const { ids } = this.targetIds(frame, [label]);
+    if (!ids.length) throw new Error(`${label} 不在当前扫描里。`);
+    const ack = await this.command({ op: 'focus', targets: ids });
+    if (!ack.ok) throw new Error(`BT 没有改换目标:${FAIL_TEXT[ack.reason ?? 'unknown_op']}。`);
+    return `BT 把 ${label} 当作攻击目标了。`;
   }
 
   private async toolSay(a: Args): Promise<string> {
@@ -605,9 +794,13 @@ export class Titanfall2World implements World {
 
   /* ---------- voice ---------- */
 
-  private subtitleOf(lines: string[], sec: number): { lines: string[]; sec: number; pos: [number, number]; size: number; alpha: number; color: [number, number, number] } {
+  /** The page as the client draws it: traditional characters when set, and a box sized to the longest line. */
+  private subtitleOf(lines: string[], sec: number): SubtitleCommand {
     const s = this.cfg.subtitle;
-    return { lines, sec, pos: [s.posX, s.posY], size: s.size, alpha: 0.95, color: [1, 1, 1] };
+    const shown = s.traditional ? lines.map((l) => toTraditional(l)) : lines;
+    const sub: SubtitleCommand = { lines: shown, sec, pos: [s.posX, s.posY], size: s.size, alpha: 0.95, color: [1, 1, 1] };
+    if (s.boxAlpha > 0) sub.box = { width: Math.max(...shown.map((l) => textWidth(l))) * CHAR_UNIT, lineHeight: LINE_UNIT, padX: 0.6, padY: 0.35, alpha: s.boxAlpha };
+    return sub;
   }
 
   private onVoicePhase(phase: VoicePhase, detail: string | null): void {

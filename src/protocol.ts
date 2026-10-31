@@ -69,6 +69,21 @@ export interface EnemyFrame {
   bossTitle?: string;
 }
 
+/** A pilot helmet collectible or a BT loadout pickup still in the level. */
+export interface PoiFrame {
+  kind: 'helmet' | 'loadout';
+  pos: Vec3;
+  /** The titan weapon of a loadout pickup. */
+  weapon?: string;
+}
+
+/** A live hostile projectile near the pilot. */
+export interface ThreatFrame {
+  cls: string;
+  weapon: string;
+  pos: Vec3;
+}
+
 export interface ObjectiveFrame {
   index: number;
   pos?: Vec3;
@@ -77,19 +92,20 @@ export interface ObjectiveFrame {
 export type GameEvent =
   | { kind: 'level'; time: number }
   | { kind: 'save_loaded'; time: number }
-  | { kind: 'pilot_died'; by: string; source: number; time: number }
-  | { kind: 'kill'; cls: string; by: string; boss?: string; time: number }
+  | { kind: 'pilot_died'; by: string; weapon: string; time: number }
+  /** `weapon` is the damage source name, e.g. mp_titanweapon_shoulder_rockets. */
+  | { kind: 'kill'; cls: string; by: string; weapon: string; boss?: string; time: number }
   | { kind: 'bt_doomed'; by: string; time: number }
   | { kind: 'titan_doomed'; id: number; by: string; boss?: string; time: number }
   | { kind: 'embark'; time: number }
   | { kind: 'disembark'; time: number };
 
-export type CommandOp = 'missiles' | 'smoke' | 'pulse';
+export type CommandOp = 'missiles' | 'smoke' | 'pulse' | 'mark' | 'focus';
 
 export interface CommandAck {
   id: number;
   ok: boolean;
-  reason?: 'no_pilot' | 'no_titan' | 'no_missiles' | 'no_targets' | 'cooldown' | 'charging' | 'no_weapon' | 'unknown_op';
+  reason?: 'no_pilot' | 'no_titan' | 'no_missiles' | 'no_targets' | 'cooldown' | 'charging' | 'no_weapon' | 'embarked' | 'unknown_op';
   fired?: number;
   targets?: number;
   burst?: number;
@@ -108,6 +124,8 @@ export interface ServerPost {
   objective?: ObjectiveFrame;
   /** Seconds until the World-cooled support actions are ready again. */
   ready?: Partial<Record<CommandOp, number>>;
+  pois?: PoiFrame[];
+  threats?: ThreatFrame[];
   events: GameEvent[];
   acks: CommandAck[];
 }
@@ -118,6 +136,8 @@ export interface ServerCommand {
   targets?: number[];
   count?: number;
   cooldownSec?: number;
+  /** How long a mark stays. */
+  durationSec?: number;
 }
 
 /** POST /client body. */
@@ -128,6 +148,8 @@ export interface ClientPost {
   /** A subtitle is on screen. */
   subtitle: boolean;
   localized: Record<string, string>;
+  /** Dialogue aliases that started playing since the last poll. */
+  dialogue?: Array<{ alias: string; speaker: string; time: number }>;
 }
 
 export interface SubtitleCommand {
@@ -138,6 +160,8 @@ export interface SubtitleCommand {
   size: number;
   alpha: number;
   color: [number, number, number];
+  /** Translucent box behind the text; sizes in font-size units at 1080p. */
+  box?: { width: number; lineHeight: number; padX: number; padY: number; alpha: number };
 }
 
 export interface ClientReply {

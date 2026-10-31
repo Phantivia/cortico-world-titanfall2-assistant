@@ -1,6 +1,8 @@
-/** Engine child entry: runs the sidecar the mod posts to and relays it over fork IPC. */
+/** Engine child entry: runs the sidecar the mod posts to, reads game frames, and relays both over fork IPC. */
 import type { ChildToMain, EngineNotice, MainToChild } from './engine-ipc.ts';
 import { Sidecar } from './sidecar.ts';
+
+const CAPTURE_PROBLEM = { 'no-window': 'the game window is not open', minimized: 'the game window is minimized', background: 'the game is not the foreground window', blank: 'the game shows a black screen' } as const;
 
 const send = (msg: ChildToMain): void => {
   process.send?.(msg);
@@ -25,6 +27,12 @@ process.on('message', (msg: MainToChild) => {
     case 'localize':
       sidecar.localize(req.tokens);
       return reply(Promise.resolve(null));
+    case 'capture':
+      return reply(import('./capture.ts').then(({ captureGame }) => {
+        const f = captureGame(req.maxWidth, req.quality);
+        if (!f.ok) throw new Error(CAPTURE_PROBLEM[f.reason]);
+        return { jpeg: f.jpeg, width: f.width, height: f.height };
+      }));
     case 'close':
       sidecar.close();
       reply(Promise.resolve(null));

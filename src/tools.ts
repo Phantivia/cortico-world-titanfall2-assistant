@@ -57,4 +57,41 @@ export const TITANFALL2_TOOL_DECLS: readonly Decl[] = [
     description: 'BT 以铁驭为中心放一次声纳脉冲：约 32 米内的敌人被高亮几秒，隔墙也看得见。回执列出被照到的敌人。有冷却。',
     parameters: { type: 'object', properties: {}, required: [] },
   },
+  {
+    name: 'titanfall2_look',
+    tags: ['read'],
+    description: '看一眼游戏现在的画面(附一张截图)和关卡、目标。游戏窗口不在前台时截不到图。',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'titanfall2_guide',
+    tags: ['read'],
+    description:
+      '地图导引：当前目标的方位与距离，这一关还没拿到的铁驭头盔收集品和 BT 装备拾取物各在哪(方位、距离、高低)，BT 在哪。方位以铁驭视线为 12 点钟。',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'titanfall2_mark',
+    tags: ['act'],
+    description: '把编号指定的敌人在铁驭视野里描边高亮，隔墙也看得见，持续几秒。有冷却。',
+    parameters: {
+      type: 'object',
+      properties: {
+        targets: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 12, description: '敌人编号，如 ["E3","E7"]' },
+      },
+      required: ['targets'],
+    },
+  },
+  {
+    name: 'titanfall2_focus',
+    tags: ['act'],
+    description: '让单独作战的 BT 把指定编号的敌人当作攻击目标。铁驭在驾驶舱里时 BT 由铁驭操控，这个指令无效。',
+    parameters: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: '敌人编号，如 "E3"' },
+      },
+      required: ['target'],
+    },
+  },
 ];

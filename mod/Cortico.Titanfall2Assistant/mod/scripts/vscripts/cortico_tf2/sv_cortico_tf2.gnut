@@ -2,8 +2,9 @@
 //
 // Every tick posts the pilot, BT, nearby hostiles and the objective to the sidecar at
 // http://127.0.0.1:<cortico_tf2_port>/server, with the events and command acks gathered since the
-// last post. The reply carries BT support commands (missiles, smoke, pulse); each one is acked in a
-// later post with the same id. Distances stay in game units and angles in degrees; the World
+// last post. The reply carries BT support commands (missiles, smoke, pulse, mark, focus); each one is
+// acked in a later post with the same id. Points of interest (pilot helmet collectibles, BT loadout
+// pickups) are looked up once per level load and after each save load. Distances stay in game units and angles in degrees; the World
 // converts them. Requests to 127.0.0.1 need the -allowlocalhttp launch argument.
 
 global function CorticoTF2_ServerInit
@@ -17,6 +18,10 @@ const string MISSILE_WEAPON = "mp_titanweapon_shoulder_rockets"
 const float MISSILE_SPEED = 1000.0
 const float MISSILE_HOMING = 300.0
 const float MISSILE_GAP_SEC = 0.12
+const float THREAT_RADIUS = 600.0
+const string HELMET_EDITOR_CLASS = "script_collectible"
+// titan weapons whose loadout BT can pick up in the campaign
+const array<string> LOADOUT_WEAPONS = [ "mp_titanweapon_xo16_shorty", "mp_titanweapon_sticky_40mm", "mp_titanweapon_meteor", "mp_titanweapon_leadwall", "mp_titanweapon_rocketeer_rocketstream", "mp_titanweapon_particle_accelerator", "mp_titanweapon_sniper", "mp_titanweapon_predator_cannon" ]
 
 struct
 {
@@ -27,6 +32,11 @@ struct
 	array events = []
 	array acks = []
 	table<string, float> readyAt
+	// encoded handle -> entity of the last scan; commands name targets by these handles
+	table<int, entity> scanned
+	array<entity> helmets
+	array<entity> loadoutPickups
+	array<string> loadoutPickupWeapons
 } file
 
 void function CorticoTF2_ServerInit()
@@ -41,6 +51,7 @@ void function CorticoTF2_ServerInit()
 	AddCallback_OnLoadSaveGame( OnLoadSaveGame )
 
 	PushEvent( { kind = "level" } )
+	thread FindPointsOfInterest()
 	thread TickThread()
 }
 
@@ -179,6 +190,8 @@ void function FillState( table body, entity player )
 	body.enemies <- ScanEnemies( player, bt )
 	body.objective <- ObjectiveState()
 	body.ready <- ReadyState()
+	body.pois <- PoiState()
+	body.threats <- ThreatState( player )
 }
 
 table function TitanState( entity player, entity bt )
@@ -221,10 +234,12 @@ array function ScanEnemies( entity player, entity bt )
 		found.append( npc )
 	}
 	array list = []
+	file.scanned.clear()
 	foreach ( entity npc in ArrayClosest( found, eye ) )
 	{
 		if ( list.len() >= MAX_ENEMIES )
 			break
+		file.scanned[ npc.GetEncodedEHandle() ] <- npc
 		list.append( EnemyState( npc, player, bt, eye ) )
 	}
 	return list
@@ -277,6 +292,63 @@ table function ObjectiveState()
 	return o
 }
 
+// Waits a moment so a save load has removed what was already picked up.
+void function FindPointsOfInterest()
+{
+	wait 2.0
+	file.helmets.clear()
+	foreach ( entity ent in GetEntArrayByClass_Expensive( "script_mover_lightweight" ) )
+	{
+		if ( IsValid( ent ) && GetEditorClass( ent ) == HELMET_EDITOR_CLASS )
+			file.helmets.append( ent )
+	}
+	array<asset> models = []
+	foreach ( string weaponName in LOADOUT_WEAPONS )
+		models.append( GetWeaponInfoFileKeyFieldAsset_Global( weaponName, "playermodel" ) )
+	file.loadoutPickups.clear()
+	file.loadoutPickupWeapons.clear()
+	foreach ( entity ent in GetEntArrayByClass_Expensive( "info_target" ) )
+	{
+		if ( !IsValid( ent ) )
+			continue
+		int at = models.find( ent.GetModelName() )
+		if ( at < 0 )
+			continue
+		file.loadoutPickups.append( ent )
+		file.loadoutPickupWeapons.append( LOADOUT_WEAPONS[ at ] )
+	}
+}
+
+array function PoiState()
+{
+	array list = []
+	foreach ( entity ent in file.helmets )
+	{
+		if ( IsValid( ent ) )
+			list.append( { kind = "helmet", pos = Vec( ent.GetOrigin() ) } )
+	}
+	foreach ( int i, entity ent in file.loadoutPickups )
+	{
+		if ( IsValid( ent ) )
+			list.append( { kind = "loadout", weapon = file.loadoutPickupWeapons[ i ], pos = Vec( ent.GetOrigin() ) } )
+	}
+	return list
+}
+
+// Live projectiles fired by hostiles near the pilot: grenades, rockets, bolts.
+array function ThreatState( entity player )
+{
+	array list = []
+	vector origin = player.GetOrigin()
+	foreach ( entity proj in GetProjectileArrayEx( "any", TEAM_ANY, TEAM_ANY, origin, THREAT_RADIUS ) )
+	{
+		if ( !IsValid( proj ) || !IsEnemyTeam( player.GetTeam(), proj.GetTeam() ) )
+			continue
+		list.append( { cls = proj.GetClassName(), weapon = proj.ProjectileGetWeaponClassName(), pos = Vec( proj.GetOrigin() ) } )
+	}
+	return list
+}
+
 table function ReadyState()
 {
 	table r = {}
@@ -304,7 +376,7 @@ string function WhoOf( entity ent )
 
 void function OnPlayerKilled( entity victim, entity attacker, var damageInfo )
 {
-	PushEvent( { kind = "pilot_died", by = WhoOf( attacker ), source = DamageInfo_GetDamageSourceIdentifier( damageInfo ) } )
+	PushEvent( { kind = "pilot_died", by = WhoOf( attacker ), weapon = DamageSourceIDToString( DamageInfo_GetDamageSourceIdentifier( damageInfo ) ) } )
 }
 
 void function OnNPCKilled( entity victim, entity attacker, var damageInfo )
@@ -315,7 +387,7 @@ void function OnNPCKilled( entity victim, entity attacker, var damageInfo )
 	string by = WhoOf( attacker )
 	if ( by != "pilot" && by != "bt" && !victim.IsTitan() )
 		return
-	table e = { kind = "kill", cls = victim.GetClassName(), by = by }
+	table e = { kind = "kill", cls = victim.GetClassName(), by = by, weapon = DamageSourceIDToString( DamageInfo_GetDamageSourceIdentifier( damageInfo ) ) }
 	if ( victim.IsTitan() && IsMercTitan( victim ) )
 		e.boss <- GetBossNameFromID( GetMercCharacterID( victim ) )
 	PushEvent( e )
@@ -354,6 +426,7 @@ void function OnTitanBecomesPilot( entity pilot, entity npcTitan )
 void function OnLoadSaveGame( entity player )
 {
 	PushEvent( { kind = "save_loaded" } )
+	thread FindPointsOfInterest()
 }
 
 // ---------- commands ----------
@@ -390,6 +463,10 @@ void function RunCommand( table cmd )
 		result = CmdSmoke( player, cmd )
 	else if ( op == "pulse" )
 		result = CmdPulse( player, cmd )
+	else if ( op == "mark" )
+		result = CmdMark( player, cmd )
+	else if ( op == "focus" )
+		result = CmdFocus( player, cmd )
 	else
 		result = Fail( "unknown_op" )
 	result.id <- cmd.id
@@ -417,6 +494,18 @@ void function StartCooldown( string op, table cmd )
 	file.readyAt[ op ] <- Time() + sec
 }
 
+array<entity> function Targets( table cmd )
+{
+	array<entity> targets = []
+	foreach ( var h in expect array( cmd.targets ) )
+	{
+		int handle = AsInt( h )
+		if ( handle in file.scanned && IsValid( file.scanned[ handle ] ) && IsAlive( file.scanned[ handle ] ) )
+			targets.append( file.scanned[ handle ] )
+	}
+	return targets
+}
+
 table function CmdMissiles( entity player, table cmd )
 {
 	entity bt = BuddyTitan( player )
@@ -428,13 +517,7 @@ table function CmdMissiles( entity player, table cmd )
 	if ( !bt.IsPlayer() && CoolingDown( "missiles" ) )
 		return Fail( "cooldown" )
 
-	array<entity> targets = []
-	foreach ( var h in expect array( cmd.targets ) )
-	{
-		entity e = GetEntityFromEncodedEHandle( AsInt( h ) )
-		if ( IsValid( e ) && IsAlive( e ) )
-			targets.append( e )
-	}
+	array<entity> targets = Targets( cmd )
 	if ( targets.len() == 0 )
 		return Fail( "no_targets" )
 
@@ -539,5 +622,52 @@ table function CmdPulse( entity player, table cmd )
 	PulseLocation( bt, bt.GetTeam(), pos, false, false )
 	EmitSoundAtPosition( TEAM_UNASSIGNED, pos, "Titan_Tone_SonarLock_Impact_Pulse_3P" )
 	StartCooldown( "pulse", cmd )
+	return { ok = true }
+}
+
+// Outlines the targets for the pilot's team through walls, the way a sonar pulse does.
+table function CmdMark( entity player, table cmd )
+{
+	array<entity> targets = Targets( cmd )
+	if ( targets.len() == 0 )
+		return Fail( "no_targets" )
+	if ( CoolingDown( "mark" ) )
+		return Fail( "cooldown" )
+	float sec = ( "durationSec" in cmd ) ? AsFloat( cmd.durationSec ) : 8.0
+	int team = player.GetTeam()
+	foreach ( entity target in targets )
+		thread MarkThread( target, team, player, sec )
+	StartCooldown( "mark", cmd )
+	return { ok = true, targets = targets.len() }
+}
+
+void function MarkThread( entity target, int team, entity owner, float sec )
+{
+	target.EndSignal( "OnDestroy" )
+	IncrementSonarPerTeam( team )
+	SonarStart( target, target.GetOrigin(), team, owner )
+	OnThreadEnd(
+		function() : ( target, team )
+		{
+			DecrementSonarPerTeam( team )
+			if ( IsValid( target ) )
+				SonarEnd( target, team )
+		}
+	)
+	wait sec
+}
+
+// BT, fighting on its own, takes the target as its enemy.
+table function CmdFocus( entity player, table cmd )
+{
+	if ( player.IsTitan() )
+		return Fail( "embarked" )
+	entity bt = player.GetPetTitan()
+	if ( !IsValid( bt ) || !IsAlive( bt ) )
+		return Fail( "no_titan" )
+	array<entity> targets = Targets( cmd )
+	if ( targets.len() == 0 )
+		return Fail( "no_targets" )
+	bt.SetEnemy( targets[0] )
 	return { ok = true }
 }

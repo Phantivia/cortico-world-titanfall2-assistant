@@ -59,7 +59,10 @@
     "prepack": "node scripts/build-webui.mjs"
   },
   "dependencies": {
-    "audify": "^1.10.1"
+    "audify": "^1.10.1",
+    "jpeg-js": "^0.4.4",
+    "koffi": "^3.3.5",
+    "opencc-js": "^1.4.2"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

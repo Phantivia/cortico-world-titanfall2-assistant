@@ -3,12 +3,14 @@
  *
  * NorthstarLauncher.exe runs the game in its own process; a Steam launch with `-northstar` runs it
  * as Titanfall2.exe. Either way the mod only reaches 127.0.0.1 with `-allowlocalhttp`, which the
- * World keeps in `ns_startup_args.txt` so manual launches carry it too.
+ * World keeps in `ns_startup_args.txt` so manual launches carry it too. Installing also writes the
+ * dialogue hook override (story.ts) built from this game's own files into the mod folder.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildDialogueOverride, DIALOGUE_HOOK, DIALOGUE_SCRIPT } from './story.ts';
 
 export const MOD_NAME = 'Cortico.Titanfall2Assistant';
 export const MOD_SOURCE = fileURLToPath(new URL(`../mod/${MOD_NAME}`, import.meta.url));
@@ -23,12 +25,20 @@ export interface GameCheck {
   /** The installed mod matches the one in this package. */
   modCurrent: boolean;
   localHttp: boolean;
+  /** The patched dialogue script that reports story lines is in place. */
+  dialogueHook: boolean;
 }
 
 export function checkGame(dir: string): GameCheck {
   const game = existsSync(join(dir, 'Titanfall2.exe'));
   const northstar = existsSync(join(dir, 'R2Northstar', 'Northstar.dll')) && existsSync(join(dir, 'NorthstarLauncher.exe'));
-  return { dir, game, northstar, modCurrent: northstar && sameTree(MOD_SOURCE, modDir(dir)), localHttp: startupArgs(dir).includes(LOCAL_HTTP) };
+  let dialogueHook = false;
+  try {
+    dialogueHook = readFileSync(join(modDir(dir), 'mod', DIALOGUE_SCRIPT), 'latin1').includes(DIALOGUE_HOOK);
+  } catch {
+    // not installed
+  }
+  return { dir, game, northstar, modCurrent: northstar && sameTree(MOD_SOURCE, modDir(dir)), localHttp: startupArgs(dir).includes(LOCAL_HTTP), dialogueHook };
 }
 
 function modDir(gameDir: string): string {
@@ -73,6 +83,20 @@ export function installMod(gameDir: string): GameCheck {
   if (!check.game) throw new Error(`no Titanfall2.exe in ${gameDir}`);
   if (!check.northstar) throw new Error(`Northstar is not installed in ${gameDir}`);
   if (!check.modCurrent) copyTree(MOD_SOURCE, modDir(gameDir));
+  const override = buildDialogueOverride(gameDir);
+  const target = join(modDir(gameDir), 'mod', DIALOGUE_SCRIPT);
+  if (override.hooks > 0) {
+    let current = '';
+    try {
+      current = readFileSync(target, 'latin1');
+    } catch {
+      // first install
+    }
+    if (current !== override.text) {
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, override.text, 'latin1');
+    }
+  }
   if (!check.localHttp) writeFileSync(join(gameDir, STARTUP_ARGS_FILE), [...startupArgs(gameDir), LOCAL_HTTP].join(' '));
   return checkGame(gameDir);
 }

@@ -11,6 +11,8 @@ export type EngineRequest =
   | { op: 'hide-subtitle' }
   /** Asks the client VM to localize these tokens; answers arrive as `client` notices. */
   | { op: 'localize'; tokens: string[] }
+  /** One JPEG of the game window; fails while the game is not the foreground window. */
+  | { op: 'capture'; maxWidth: number; quality: number }
   | { op: 'close' };
 
 /** The server post without its one-shot parts. */
@@ -25,6 +27,12 @@ export type EngineNotice =
   | { notice: 'log'; level: 'info' | 'warn'; text: string };
 
 export type CommandResult = CommandAck;
+
+export interface CaptureResult {
+  jpeg: Uint8Array;
+  width: number;
+  height: number;
+}
 
 export type MainToChild = { id: number; req: EngineRequest };
 export type ChildToMain =

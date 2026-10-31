@@ -10,6 +10,7 @@ interface GameCheck {
   northstar: boolean;
   modCurrent: boolean;
   localHttp: boolean;
+  dialogueHook: boolean;
 }
 
 interface StartState {
@@ -35,7 +36,7 @@ const TEXT = {
     install: '安装/更新模组',
     launch: '启动游戏',
     launching: '启动中…',
-    checks: { game: 'Titanfall2.exe', northstar: 'Northstar', modCurrent: '模组已是最新', localHttp: '-allowlocalhttp' },
+    checks: { game: 'Titanfall2.exe', northstar: 'Northstar', modCurrent: '模组已是最新', localHttp: '-allowlocalhttp', dialogueHook: '剧情钩子' },
     yes: '有',
     no: '没有',
     notFound: '没找到游戏目录',
@@ -58,7 +59,7 @@ const TEXT = {
     install: 'Install/update mod',
     launch: 'Launch game',
     launching: 'Launching…',
-    checks: { game: 'Titanfall2.exe', northstar: 'Northstar', modCurrent: 'Mod up to date', localHttp: '-allowlocalhttp' },
+    checks: { game: 'Titanfall2.exe', northstar: 'Northstar', modCurrent: 'Mod up to date', localHttp: '-allowlocalhttp', dialogueHook: 'Story hook' },
     yes: 'yes',
     no: 'no',
     notFound: 'No game folder found',

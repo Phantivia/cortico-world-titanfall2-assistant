@@ -1,15 +1,19 @@
 /**
- * The installed game: finding it, installing the mod into Northstar, and launching through Northstar.
+ * The installed game: finding it, installing Northstar and the mod, the EA app it signs in through,
+ * and launching through Northstar.
  *
  * NorthstarLauncher.exe runs the game in its own process; a Steam launch with `-northstar` runs it
  * as Titanfall2.exe. Either way the mod only reaches 127.0.0.1 with `-allowlocalhttp`, which the
  * World keeps in `ns_startup_args.txt` so manual launches carry it too. Installing also writes the
  * dialogue hook override (story.ts) built from this game's own files into the mod folder.
  */
-import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { downloadFile, unzip, type Progress } from './download.ts';
 import { buildDialogueOverride, DIALOGUE_HOOK, DIALOGUE_SCRIPT } from './story.ts';
 
 export const MOD_NAME = 'Cortico.Titanfall2Assistant';
@@ -17,6 +21,28 @@ export const MOD_SOURCE = fileURLToPath(new URL(`../mod/${MOD_NAME}`, import.met
 const STARTUP_ARGS_FILE = 'ns_startup_args.txt';
 const LOCAL_HTTP = '-allowlocalhttp';
 const GAME_PROCESSES = ['NorthstarLauncher.exe', 'Titanfall2.exe'];
+
+/** The Northstar release installed when the game has none; its archive unpacks over the game folder. */
+export const NORTHSTAR_VERSION = '1.31.14';
+const NORTHSTAR_URL = `https://github.com/R2Northstar/Northstar/releases/download/v${NORTHSTAR_VERSION}/Northstar.release.v${NORTHSTAR_VERSION}.zip`;
+/** The EA app's LSX server, which the game asks for the signed-in account. */
+const EA_LSX_PORT = 3216;
+
+const run = promisify(execFile);
+
+/** stdout of a console tool, or '' when it fails; never blocks the event loop. */
+async function output(file: string, args: string[]): Promise<string> {
+  try {
+    return (await run(file, args, { encoding: 'utf8', windowsHide: true })).stdout;
+  } catch {
+    return '';
+  }
+}
+
+async function regValue(key: string, name: string): Promise<string> {
+  const out = await output('reg', ['query', key, '/v', name]);
+  return new RegExp(`${name}\\s+REG_SZ\\s+(.+)`).exec(out)?.[1]?.trim() ?? '';
+}
 
 export interface GameCheck {
   dir: string;
@@ -101,15 +127,52 @@ export function installMod(gameDir: string): GameCheck {
   return checkGame(gameDir);
 }
 
+/** Downloads the pinned Northstar release into `workDir` and unpacks it over the game folder. */
+export async function installNorthstar(gameDir: string, workDir: string, onProgress: (p: Progress) => void): Promise<GameCheck> {
+  if (!existsSync(join(gameDir, 'Titanfall2.exe'))) throw new Error(`no Titanfall2.exe in ${gameDir}`);
+  const zip = join(workDir, `Northstar.release.v${NORTHSTAR_VERSION}.zip`);
+  const staging = join(workDir, `northstar-${NORTHSTAR_VERSION}`);
+  if (!existsSync(zip)) await downloadFile(NORTHSTAR_URL, zip, `Northstar v${NORTHSTAR_VERSION}`, onProgress);
+  rmSync(staging, { recursive: true, force: true });
+  onProgress({ label: `Northstar v${NORTHSTAR_VERSION}`, done: 0, total: null });
+  await unzip(zip, staging);
+  copyTree(staging, gameDir);
+  rmSync(staging, { recursive: true, force: true });
+  rmSync(zip, { force: true });
+  return checkGame(gameDir);
+}
+
+/** EADesktop.exe as the EA app's installer recorded it, or null when the EA app is not installed. */
+export async function eaAppPath(): Promise<string | null> {
+  const path = await regValue('HKLM\\SOFTWARE\\Electronic Arts\\EA Desktop', 'DesktopAppPath');
+  return path && existsSync(path) ? path : null;
+}
+
+export async function eaAppRunning(): Promise<boolean> {
+  return (await pidsOf('EADesktop.exe')).length > 0;
+}
+
+export function startEaApp(path: string): void {
+  spawn(path, [], { detached: true, stdio: 'ignore' }).unref();
+}
+
+/** Whether the EA app's LSX server accepts connections on loopback. */
+export function eaLsxListening(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = connect({ host: '127.0.0.1', port: EA_LSX_PORT });
+    const done = (ok: boolean): void => {
+      s.destroy();
+      resolve(ok);
+    };
+    s.setTimeout(1000, () => done(false));
+    s.once('connect', () => done(true));
+    s.once('error', () => done(false));
+  });
+}
+
 /** Steam library folders holding steamapps/common/Titanfall2. */
-export function findGameDirs(): string[] {
-  let steam = '';
-  try {
-    const out = execFileSync('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath'], { encoding: 'utf8', windowsHide: true });
-    steam = /SteamPath\s+REG_SZ\s+(.+)/.exec(out)?.[1]?.trim() ?? '';
-  } catch {
-    // no Steam
-  }
+export async function findGameDirs(): Promise<string[]> {
+  const steam = await regValue('HKCU\\Software\\Valve\\Steam', 'SteamPath');
   const libraries = new Set<string>();
   if (steam) {
     libraries.add(steam);
@@ -124,20 +187,13 @@ export function findGameDirs(): string[] {
 }
 
 /** PIDs of running game processes. */
-export function runningGame(): number[] {
-  const pids: number[] = [];
-  for (const image of GAME_PROCESSES) {
-    try {
-      const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
-      for (const line of out.split(/\r?\n/)) {
-        const m = /^"[^"]+","(\d+)"/.exec(line);
-        if (m) pids.push(Number(m[1]));
-      }
-    } catch {
-      // tasklist unavailable
-    }
-  }
-  return pids;
+export async function runningGame(): Promise<number[]> {
+  return (await Promise.all(GAME_PROCESSES.map(pidsOf))).flat();
+}
+
+async function pidsOf(image: string): Promise<number[]> {
+  const out = await output('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/FO', 'CSV', '/NH']);
+  return [...out.matchAll(/^"[^"]+","(\d+)"/gm)].map((m) => Number(m[1]));
 }
 
 /** Starts NorthstarLauncher.exe detached; the game outlives the World. */

@@ -8,7 +8,8 @@
  * (piggyback, only the parts that changed since the last one), and `titanfall2_scan` on demand.
  * Campaign dialogue arrives through a hook the World patches into the game's dialogue script
  * (story.ts); it is queued and rendered at delivery with a game frame read at that moment.
- * BT's voice is VoxCPM2 cloned from a line cut out of the installed game (voice.ts).
+ * BT's voice is VoxCPM2 cloned from a line cut out of the installed game (voice.ts); it starts when a
+ * one-click start runs (play.ts) or a level links, so a World left on does not hold the GPU.
  */
 import { fork, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -21,17 +22,20 @@ import { nowIso } from 'cortico/core/util.ts';
 import * as OpenCC from 'opencc-js';
 import { TITANFALL2_ID, titanfall2ConfigGroups, type Titanfall2ConfigSection } from './config.ts';
 import type { CaptureResult, ChildToMain, EngineNotice, EngineRequest, Frame } from './engine-ipc.ts';
-import { checkGame, findGameDirs, installMod, launchGame, runningGame, type GameCheck } from './game.ts';
+import type { Progress } from './download.ts';
+import { checkGame, eaAppPath, findGameDirs, installMod, NORTHSTAR_VERSION, runningGame, type GameCheck } from './game.ts';
 import {
   Labels, btLine, className, countText, enemiesBlock, enemyText, weaponName as weaponNameOf, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
   type Lookup, type SeenEnemy,
 } from './intel.ts';
+import { Play } from './play.ts';
 import { Player } from './player.ts';
 import type { ClientPost, CommandAck, GameEvent, PoiFrame, ServerCommand, SubtitleCommand } from './protocol.ts';
 import { Speech, width as textWidth } from './speech.ts';
 import { Captions } from './story.ts';
 import { TITANFALL2_TOOL_DECLS } from './tools.ts';
 import { Voice, type VoicePhase } from './voice.ts';
+import { downloadVoiceAssets, voiceAssets } from './voice-assets.ts';
 
 const ENGINE_FILE = fileURLToPath(new URL('./engine-child.ts', import.meta.url));
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -168,7 +172,11 @@ export class Titanfall2World implements World {
   private voice: Voice | null = null;
   private player: Player | null = null;
   private speech: Speech | null = null;
-  private launchError: string | null = null;
+  private play: Play | null = null;
+  /** The Steam copy found at start or by the last detection; used while `gameDir` is empty. */
+  private detectedDir: string | null = null;
+  private readonly lookups = new Map<string, { at: number; value: unknown; pending: boolean }>();
+  private voiceDownload: { progress: Progress | null; error: string | null; running: boolean } = { progress: null, error: null, running: false };
 
   constructor(private readonly opts: Titanfall2WorldOptions) {
     this.cfg = opts.cfg;
@@ -209,6 +217,7 @@ export class Titanfall2World implements World {
       this.sidecarError = `sidecar 没能在 127.0.0.1:${this.cfg.port} 监听:${err instanceof Error ? err.message : String(err)}`;
       log.warn(this.sidecarError);
     }
+    await this.detectGameDir();
     const dir = this.gameDir();
     if (dir) {
       try {
@@ -221,7 +230,16 @@ export class Titanfall2World implements World {
         log.warn('安装模组失败', { err: String(err) });
       }
     }
-    if (this.cfg.voice.enabled) void this.voice.start().catch(() => undefined);
+    this.play = new Play({
+      gameDir: async () => this.gameDir() ?? (await this.detectGameDir()),
+      workDir: this.opts.dataDir,
+      launchArgs: () => this.cfg.launchArgs,
+      port: () => this.cfg.port,
+      startVoice: () => this.startVoice(),
+      focus: () => this.call<boolean>({ op: 'focus' }).catch(() => false),
+      linked: () => this.link.server,
+      log,
+    });
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
   }
 
@@ -231,6 +249,7 @@ export class Titanfall2World implements World {
     this.tickTimer = null;
     if (this.killTimer) clearTimeout(this.killTimer);
     this.killTimer = null;
+    this.play?.stop();
     await this.speech?.hush().catch(() => undefined);
     this.voice?.stop();
     this.player?.close();
@@ -336,6 +355,8 @@ export class Titanfall2World implements World {
         this.emit('titanfall2.state', '游戏连上了。', 'flush');
         this.host?.log.info('游戏已连上');
       }
+      this.play?.onLinked();
+      this.startVoice();
     } else {
       this.linkDownAt = Date.now();
     }
@@ -623,8 +644,10 @@ export class Titanfall2World implements World {
     this.labels.prune(now, LABEL_KEEP_MS);
     if (this.linkDownAt !== null && !this.linkDownReported && now - this.linkDownAt >= LINK_DOWN_REPORT_MS) {
       this.linkDownReported = true;
-      const running = runningGame().length > 0;
-      this.emit('titanfall2.state', running ? '游戏停止上报了(暂停菜单、读图或过场)。' : '游戏关闭了。', running ? 'piggyback' : 'flush');
+      void runningGame().then((pids) => {
+        const running = pids.length > 0;
+        this.emit('titanfall2.state', running ? '游戏停止上报了(暂停菜单、读图或过场)。' : '游戏关闭了。', running ? 'piggyback' : 'flush');
+      });
     }
     if (this.link.server && !this.snapshotArmed && now - this.lastSnapshotAt >= this.cfg.intel.snapshotSec * 1000) this.armSnapshot();
   }
@@ -688,6 +711,7 @@ export class Titanfall2World implements World {
       titanfall2_guide: () => this.toolGuide(),
       titanfall2_mark: (a) => this.toolMark(a),
       titanfall2_focus: (a) => this.toolFocus(a),
+      titanfall2_launch: () => this.toolLaunch(),
     };
     return TITANFALL2_TOOL_DECLS.map((d) => ({ ...d, handler: (args) => handlers[d.name](args) }));
   }
@@ -703,6 +727,13 @@ export class Titanfall2World implements World {
     const sec = (s: number): string => (s > 0 ? `还要 ${s} 秒` : '就绪');
     const missiles = r.missiles === null ? '没有飞弹系统' : r.missiles > 0 ? `可发 ${r.missiles} 枚` : r.missilesSec > 0 ? `冷却还要 ${r.missilesSec} 秒` : '充能中';
     return `支援:飞弹 ${missiles};电烟幕 ${sec(r.smokeSec)};声纳 ${sec(r.pulseSec)}`;
+  }
+
+  private async toolLaunch(): Promise<string> {
+    const s = await this.play!.run();
+    if (s.step === 'error') throw new Error(s.detail);
+    if (s.step === 'playing') return '游戏已经在关卡里，连上了。';
+    return '游戏已打开并切到前台，停在主菜单。玩家选「继续」或「任务选择」进入战役后，会收到「游戏连上了」。';
   }
 
   private async toolScan(a: Args): Promise<string> {
@@ -870,6 +901,13 @@ export class Titanfall2World implements World {
     return sub;
   }
 
+  /** Starts BT's voice in the background when it is on and not already up or starting. */
+  private startVoice(): void {
+    const v = this.voice;
+    if (!this.cfg.voice.enabled || !v || v.phase === 'ready' || v.phase === 'starting') return;
+    void v.start().catch(() => undefined);
+  }
+
   private onVoicePhase(phase: VoicePhase, detail: string | null): void {
     if (phase === 'error') this.log?.warn('BT 语音不可用', { detail });
   }
@@ -879,7 +917,34 @@ export class Titanfall2World implements World {
   private gameDir(): string | null {
     const configured = this.cfg.gameDir.trim().replace(/^"|"$/g, '');
     if (configured) return existsSync(configured) ? configured : null;
-    return findGameDirs()[0] ?? null;
+    return this.detectedDir;
+  }
+
+  private async detectGameDir(): Promise<string | null> {
+    this.detectedDir = (await findGameDirs())[0] ?? null;
+    return this.detectedDir;
+  }
+
+  /**
+   * The last result of a lookup, refreshed in the background once older than `maxAgeMs`; only the first
+   * call waits. The panel polls every second and tasklist takes seconds while the game loads a level.
+   */
+  private async cached<T>(key: string, maxAgeMs: number, fn: () => Promise<T>): Promise<T> {
+    const hit = this.lookups.get(key);
+    if (!hit) {
+      const value = await fn();
+      this.lookups.set(key, { at: Date.now(), value, pending: false });
+      return value;
+    }
+    if (!hit.pending && Date.now() - hit.at >= maxAgeMs) {
+      hit.pending = true;
+      void fn()
+        .then((value) => Object.assign(hit, { at: Date.now(), value }))
+        .finally(() => {
+          hit.pending = false;
+        });
+    }
+    return hit.value as T;
   }
 
   private emit(type: string, text: string, trigger: TriggerMode, tags?: readonly EventTag[]): void {
@@ -911,7 +976,7 @@ export class Titanfall2World implements World {
         { label: en ? 'BT voice' : 'BT 语音', state: voiceLamp, hint: this.voiceText() },
       ],
       badges: this.map ? [{ label: en ? 'Level' : '关卡', value: mapName(this.map), tone: this.link.server ? 'on' : 'plain' }] : [],
-      panels: [{ id: 'start', title: en ? 'Quick start' : '快速启动', description: en ? 'Game folder, mod, launch, and BT\'s voice.' : '游戏目录、模组、启动游戏和 BT 语音。' }],
+      panels: [{ id: 'start', title: en ? 'Quick start' : '快速启动', description: en ? 'Start everything with one button; game folder, mod and BT\'s voice.' : '一键开始;游戏目录、模组和 BT 语音。' }],
       invoke: (panel, method, args) => this.invoke(panel, method, args),
       config: titanfall2ConfigGroups(language),
       promptDocs: [
@@ -927,7 +992,7 @@ export class Titanfall2World implements World {
     };
   }
 
-  private gameState(): Record<string, unknown> {
+  private async gameState(): Promise<Record<string, unknown>> {
     const dir = this.gameDir();
     let check: GameCheck | null = null;
     try {
@@ -939,15 +1004,41 @@ export class Titanfall2World implements World {
       gameDir: this.cfg.gameDir,
       resolvedDir: dir,
       check,
-      running: runningGame(),
+      running: await this.cached('running', 2000, runningGame),
       link: this.link,
       line: this.stateLine(),
       sidecarError: this.sidecarError,
-      launchError: this.launchError,
-      voice: { enabled: this.cfg.voice.enabled, phase: this.voice?.phase ?? 'off', detail: this.voice?.detail ?? null },
+      play: this.play?.state ?? null,
+      northstarVersion: NORTHSTAR_VERSION,
+      eaApp: (await this.cached('ea', 30_000, eaAppPath)) !== null,
+      voice: {
+        enabled: this.cfg.voice.enabled,
+        phase: this.voice?.phase ?? 'off',
+        detail: this.voice?.detail ?? null,
+        assets: voiceAssets(this.cfg.voice, this.opts.runtimesRoot, this.opts.modelsRoot),
+        download: this.voiceDownload,
+      },
       map: this.map ? mapName(this.map) : null,
       objective: this.objective || null,
     };
+  }
+
+  /** Downloads the missing voice runtime and weights in the background, then starts the voice. */
+  private downloadVoice(): void {
+    if (this.voiceDownload.running) return;
+    this.voiceDownload = { progress: null, error: null, running: true };
+    void downloadVoiceAssets(this.cfg.voice, this.opts.runtimesRoot, this.opts.modelsRoot, (p) => {
+      this.voiceDownload.progress = p;
+    })
+      .then(() => {
+        this.voiceDownload = { progress: null, error: null, running: false };
+        this.log?.info('BT 语音组件已下载');
+        this.startVoice();
+      })
+      .catch((err: unknown) => {
+        this.voiceDownload = { progress: null, error: err instanceof Error ? err.message : String(err), running: false };
+        this.log?.warn('BT 语音组件下载失败', { err: this.voiceDownload.error });
+      });
   }
 
   private async invoke(panel: string, method: string, args: unknown[] = []): Promise<unknown> {
@@ -962,21 +1053,14 @@ export class Titanfall2World implements World {
         if (!dir) throw new Error('没找到游戏目录');
         return installMod(dir);
       }
-      case 'launch': {
-        const dir = this.gameDir();
-        if (!dir) throw new Error('没找到游戏目录');
-        this.launchError = null;
-        try {
-          installMod(dir);
-          return { pid: launchGame(dir, this.cfg.launchArgs, this.cfg.port) };
-        } catch (err) {
-          this.launchError = err instanceof Error ? err.message : String(err);
-          throw err;
-        }
-      }
+      case 'play':
+        return this.play?.run();
       case 'voice-start':
         await this.voice?.start();
         return { phase: this.voice?.phase };
+      case 'download-voice':
+        this.downloadVoice();
+        return null;
       case 'refresh-sample':
         return this.voice?.refreshSample();
       case 'test-voice': {

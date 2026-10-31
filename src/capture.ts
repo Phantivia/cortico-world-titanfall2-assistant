@@ -29,6 +29,8 @@ const IsIconic = user32.func('bool __stdcall IsIconic(intptr_t hwnd)');
 const GetWindowTextW = user32.func('int __stdcall GetWindowTextW(intptr_t hwnd, _Out_ uint16_t *buf, int max)');
 const GetWindowThreadProcessId = user32.func('uint32_t __stdcall GetWindowThreadProcessId(intptr_t hwnd, _Out_ uint32_t *pid)');
 const GetForegroundWindow = user32.func('intptr_t __stdcall GetForegroundWindow()');
+const ShowWindowAsync = user32.func('bool __stdcall ShowWindowAsync(intptr_t hwnd, int cmd)');
+const SwitchToThisWindow = user32.func('void __stdcall SwitchToThisWindow(intptr_t hwnd, bool altTab)');
 const GetClientRect = user32.func('bool __stdcall GetClientRect(intptr_t hwnd, _Out_ TF2_RECT *rect)');
 const ClientToScreen = user32.func('bool __stdcall ClientToScreen(intptr_t hwnd, _Inout_ TF2_POINT *p)');
 const GetDC = user32.func('void *__stdcall GetDC(intptr_t hwnd)');
@@ -48,6 +50,7 @@ const QueryFullProcessImageNameW = kernel32.func('bool __stdcall QueryFullProces
 const CloseHandle = kernel32.func('bool __stdcall CloseHandle(void *h)');
 
 const SRCCOPY = 0x00cc0020, CAPTUREBLT = 0x40000000, HALFTONE = 4;
+const SW_RESTORE = 9;
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 const GAME_IMAGES = ['northstarlauncher.exe', 'titanfall2.exe'];
 const GAME_TITLE = 'Titanfall 2';
@@ -88,6 +91,19 @@ export function findGameWindow(): bigint | null {
     koffi.unregister(cb);
   }
   return found;
+}
+
+/**
+ * Restores the game window and brings it to the front; false when the game has no window yet. The
+ * campaign pauses itself while its window is in the background, and a game started from a background
+ * process often opens minimized.
+ */
+export function focusGameWindow(): boolean {
+  const hwnd = findGameWindow();
+  if (hwnd === null) return false;
+  if (IsIconic(hwnd)) ShowWindowAsync(hwnd, SW_RESTORE);
+  SwitchToThisWindow(hwnd, true);
+  return true;
 }
 
 export type Frame = { ok: true; jpeg: Uint8Array; width: number; height: number } | { ok: false; reason: 'no-window' | 'minimized' | 'background' | 'blank' };

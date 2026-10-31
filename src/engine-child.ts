@@ -33,6 +33,8 @@ process.on('message', (msg: MainToChild) => {
         if (!f.ok) throw new Error(CAPTURE_PROBLEM[f.reason]);
         return { jpeg: f.jpeg, width: f.width, height: f.height };
       }));
+    case 'focus':
+      return reply(import('./capture.ts').then(({ focusGameWindow }) => focusGameWindow()));
     case 'close':
       sidecar.close();
       reply(Promise.resolve(null));

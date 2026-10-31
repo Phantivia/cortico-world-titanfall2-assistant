@@ -20,25 +20,34 @@ Owner: `src/definition.ts`
 ## 要求
 
 - Windows,Node.js 22+。
-- 自备泰坦陨落 2。Steam 版要装好并登录 EA App。
-- 游戏目录装好 [Northstar](https://github.com/R2Northstar/Northstar/releases)(按 v1.31.14 开发)。
-- BT 语音需要两样东西：
-  - 一个 llama.cpp-omni 运行时(`llama-tts-server.exe`,vtuber 扩展装的那个)。
-  - VoxCPM2 模型文件 `VoxCPM2-BaseLM-F16.gguf` 和 `VoxCPM2-Acoustic-F16.gguf`。
+- 自备泰坦陨落 2,装好并登录 EA App(Steam 版也通过它登录)。
+- [Northstar](https://github.com/R2Northstar/Northstar/releases):没装时一键开始会下载 v1.31.14 装进游戏目录。
+- BT 语音要 NVIDIA 显卡和两样文件，缺了面板上可以下载(共约 5.6 GB),放在 vtuber 扩展用的同一位置，两个扩展共用：
+  - llama.cpp-omni 运行时(`llama-tts-server.exe`),装在 `<运行时根>/llama.cpp-omni/`。
+  - VoxCPM2 模型文件 `VoxCPM2-BaseLM-F16.gguf` 和 `VoxCPM2-Acoustic-F16.gguf`,在 `<模型根>/vtuber/`。
 - 截样片要 PATH 上有 ffmpeg,版本需带 binka 解复用器(2021 年以后的版本都有)。
 
 ## 安装与启动
 
-在 Cortico 里按本机目录装本扩展，启用 `worlds.titanfall2`。World 启动时做这几件事：
+装好本扩展，启用 `worlds.titanfall2`。World 启动时做这几件事：
 
 1. 找到游戏目录。`gameDir` 留空时找 Steam 库。
 2. 把 `mod/Cortico.Titanfall2Assistant` 复制进 `R2Northstar/mods/`,并在 `ns_startup_args.txt` 加上 `-allowlocalhttp`(Northstar 默认不许模组访问 127.0.0.1)。
 3. 从游戏自己的 VPK 读出 `sp/sh_sp_dialogue.gnut`,在台词播放处插入上报钩子，写进模组目录作覆盖文件。见下文「剧情」。
 4. 在 `127.0.0.1:<port>` 起 sidecar。
-5. 语音开着时，从游戏的 `r2/sound` 截出样片台词，启动 VoxCPM2 服务。
 
-游戏从「快速启动」页签启动，命令是 `NorthstarLauncher.exe -allowlocalhttp <launchArgs> +cortico_tf2_port <port>`:
+开始玩用「快速启动」页签的「一键开始」,或让 Coo 打开游戏(`titanfall2_launch`),两者走同一套流程(`src/play.ts`):
+
+1. 游戏目录里没有 Northstar 时，下载 v1.31.14 解到游戏目录。
+2. 安装或更新模组。
+3. EA App 没在运行时先启动它，等它的 LSX 端口(127.0.0.1:3216)打开后再等 15 秒让它登录。
+4. 在后台启动 BT 语音：从游戏的 `r2/sound` 截出样片台词，启动 VoxCPM2 服务。
+5. 用 `NorthstarLauncher.exe -allowlocalhttp <launchArgs> +cortico_tf2_port <port>` 启动游戏，窗口出现后恢复并切到前台。游戏停在主菜单，玩家选「继续」或「任务选择」进入战役。
+
+几点说明：
 - `launchArgs` 默认 `-noOriginStartup -novid`。Northstar 默认去找 Origin,本机只有 EA App 时会报「failed reading Origin path」。
+- EA App 没登录完游戏就会弹出 `#ORIGIN_LOGGED_OUT`,点确定后退出;游戏在启动 90 秒内没进关卡就退出时，面板写明这个原因。
+- BT 语音不随 World 启动：一键开始或有关卡连上时才启动，World 开着不玩游戏时不占显存。
 - 单人战役在游戏窗口失去焦点时会暂停，暂停期间模组不上报;停止上报超过 10 秒，World 会推一条状态事件。
 
 ## 工具
@@ -54,6 +63,7 @@ Owner: `src/definition.ts`
 | `titanfall2_pulse` | 以铁驭为中心放声纳脉冲，回执列出照到的敌人 |
 | `titanfall2_mark` | 把指定敌人对铁驭隔墙描边高亮 `support.markSec` 秒 |
 | `titanfall2_focus` | 铁驭步行时让 BT 把指定敌人当攻击目标 |
+| `titanfall2_launch` | 一键开始：按需装 Northstar 与模组、启动 EA App 和 BT 语音，打开游戏并切到前台 |
 
 几项约定：
 - 方位以铁驭视线为 12 点钟;距离按 1 米 = 39.37 游戏单位换算。

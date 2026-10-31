@@ -24,6 +24,7 @@ export const TITANFALL2: WorldDefinition<Titanfall2ConfigSection> = {
       titanfall2_guide: { zh: '地图导引：目标、没拿到的头盔收集品和 BT 装备拾取物在哪。', en: 'Map guide: the objective, uncollected pilot helmets and BT loadout pickups.' },
       titanfall2_mark: { zh: '把指定敌人隔墙描边高亮给铁驭看。', en: 'Outlines the given hostiles for the pilot, through walls.' },
       titanfall2_focus: { zh: '让单独作战的 BT 攻击指定敌人。', en: 'Has BT, fighting on its own, target the given hostile.' },
+      titanfall2_launch: { zh: '替玩家打开游戏：按需安装 Northstar 与模组、启动 EA App 和 BT 语音，再启动游戏并切到前台。', en: 'Opens the game for the player: installs Northstar and the mod as needed, starts the EA app and BT\'s voice, then launches the game in front.' },
     }),
     events: [
       { type: 'titanfall2.state', description: { zh: '游戏连上、关闭或停止上报，进入新关卡，读取检查点。', en: 'The game connected, closed or stopped reporting, a level started, or a checkpoint loaded.' }, trigger: 'flush' },

@@ -15,9 +15,9 @@ import { extractSample } from './sample.ts';
 
 type VoiceConfig = Titanfall2ConfigSection['voice'];
 
-const SERVER_EXE = 'llama-tts-server.exe';
-const BASE_LM = 'VoxCPM2-BaseLM-F16.gguf';
-const ACOUSTIC = 'VoxCPM2-Acoustic-F16.gguf';
+export const SERVER_EXE = 'llama-tts-server.exe';
+export const BASE_LM = 'VoxCPM2-BaseLM-F16.gguf';
+export const ACOUSTIC = 'VoxCPM2-Acoustic-F16.gguf';
 const HEALTH_TIMEOUT_MS = 180_000;
 const SYNTH_TIMEOUT_MS = 60_000;
 
@@ -92,6 +92,11 @@ export function findRuntime(runtimesRoot: string): string | null {
   }
   found.sort((a, b) => b.at - a.at);
   return found[0]?.dir ?? null;
+}
+
+/** Where the server and weights are taken from: the configured directories, else the shared defaults. */
+export function voiceDirs(cfg: VoiceConfig, runtimesRoot: string, modelsRoot: string): { runtimeDir: string | null; modelsDir: string } {
+  return { runtimeDir: cfg.runtimeDir.trim() || findRuntime(runtimesRoot), modelsDir: cfg.modelsDir.trim() || join(modelsRoot, 'vtuber') };
 }
 
 export interface VoiceOptions {
@@ -227,9 +232,8 @@ export class Voice {
   }
 
   private async spawnServer(cfg: VoiceConfig): Promise<void> {
-    const runtimeDir = cfg.runtimeDir.trim() || findRuntime(this.opts.runtimesRoot);
+    const { runtimeDir, modelsDir } = voiceDirs(cfg, this.opts.runtimesRoot, this.opts.modelsRoot);
     if (!runtimeDir || !existsSync(join(runtimeDir, SERVER_EXE))) throw new Error(`${SERVER_EXE} not found${runtimeDir ? ` in ${runtimeDir}` : `: no llama.cpp-omni runtime under ${this.opts.runtimesRoot}`}`);
-    const modelsDir = cfg.modelsDir.trim() || join(this.opts.modelsRoot, 'vtuber');
     for (const f of [BASE_LM, ACOUSTIC]) if (!existsSync(join(modelsDir, f))) throw new Error(`missing ${join(modelsDir, f)}`);
     const port = await freePort();
     const args = ['--host', '127.0.0.1', '--port', String(port), '--voxcpm2-base-lm', join(modelsDir, BASE_LM), '--voxcpm2-acoustic', join(modelsDir, ACOUSTIC), '--voxcpm2-n-gpu-layers', '-1'];

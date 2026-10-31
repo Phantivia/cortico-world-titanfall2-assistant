@@ -94,4 +94,11 @@ export const TITANFALL2_TOOL_DECLS: readonly Decl[] = [
       required: ['target'],
     },
   },
+  {
+    name: 'titanfall2_launch',
+    tags: ['act'],
+    description:
+      '替玩家打开泰坦陨落 2:没装 Northstar 先下载安装(第一次约 107 MB,要几分钟),装好模组,EA App 没开先启动它并等它登录，在后台启动 BT 的声音，再启动游戏并切到前台。返回时游戏停在主菜单，玩家自己选「继续」或章节进入战役。游戏已经开着时只把窗口切到前台。',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
 ];

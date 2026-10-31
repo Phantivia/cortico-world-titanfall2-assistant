@@ -13,6 +13,8 @@ export type EngineRequest =
   | { op: 'localize'; tokens: string[] }
   /** One JPEG of the game window; fails while the game is not the foreground window. */
   | { op: 'capture'; maxWidth: number; quality: number }
+  /** Restores and fronts the game window; the reply says whether there was one. */
+  | { op: 'focus' }
   | { op: 'close' };
 
 /** The server post without its one-shot parts. */

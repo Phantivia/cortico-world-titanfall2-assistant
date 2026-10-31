@@ -13,6 +13,7 @@ import { connect } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import type { Titanfall2ConfigSection } from './config.ts';
 import { downloadFile, unzip, type Progress } from './download.ts';
 import { buildDialogueOverride, DIALOGUE_HOOK, DIALOGUE_SCRIPT } from './story.ts';
 
@@ -39,9 +40,13 @@ async function output(file: string, args: string[]): Promise<string> {
   }
 }
 
-async function regValue(key: string, name: string): Promise<string> {
+/** A string registry value, with %VARIABLES% of a REG_EXPAND_SZ filled in from this process's environment. */
+export async function regValue(key: string, name: string): Promise<string> {
   const out = await output('reg', ['query', key, '/v', name]);
-  return new RegExp(`${name}\\s+REG_SZ\\s+(.+)`).exec(out)?.[1]?.trim() ?? '';
+  const m = new RegExp(`${name}\\s+REG_(EXPAND_)?SZ\\s+(.+)`).exec(out);
+  if (!m) return '';
+  const value = m[2].trim();
+  return m[1] ? value.replace(/%([^%]+)%/g, (all, v: string) => process.env[v] ?? all) : value;
 }
 
 export interface GameCheck {
@@ -197,8 +202,22 @@ async function pidsOf(image: string): Promise<number[]> {
 }
 
 /** Starts NorthstarLauncher.exe detached; the game outlives the World. */
-export function launchGame(gameDir: string, extraArgs: string, port: number): number {
-  const args = [LOCAL_HTTP, ...extraArgs.split(/\s+/).filter(Boolean), '+cortico_tf2_port', String(port)];
+/**
+ * The arguments after `-allowlocalhttp`: the configured ones, then those the display and focus settings call for.
+ * `-noborder` takes the border off windowed mode; only then can other windows, such as the pet, draw over a game
+ * that covers the screen. The campaign pauses, drops its frame rate and mutes while another window has focus
+ * unless told otherwise; `sound_without_focus` is kept in the game's profile, so it is always passed.
+ */
+export function gameArgs(cfg: Pick<Titanfall2ConfigSection, 'launchArgs' | 'display' | 'focus'>): string[] {
+  const args = cfg.launchArgs.split(/\s+/).filter(Boolean);
+  if (cfg.display.mode === 'borderless') args.push('-noborder');
+  if (cfg.focus.keepRunning) args.push('+sp_not_focus_pause', '0', '+not_focus_sleep', '0');
+  args.push('+sound_without_focus', cfg.focus.sound ? '1' : '0');
+  return args;
+}
+
+export function launchGame(gameDir: string, extraArgs: readonly string[], port: number): number {
+  const args = [LOCAL_HTTP, ...extraArgs, '+cortico_tf2_port', String(port)];
   const child = spawn(join(gameDir, 'NorthstarLauncher.exe'), args, { cwd: gameDir, detached: true, stdio: 'ignore', windowsHide: false });
   child.unref();
   if (!child.pid) throw new Error('NorthstarLauncher.exe did not start');

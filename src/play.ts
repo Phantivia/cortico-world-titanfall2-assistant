@@ -25,7 +25,10 @@ export interface PlayDeps {
   gameDir: () => Promise<string | null>;
   /** Where downloads are kept while they unpack. */
   workDir: string;
-  launchArgs: () => string;
+  /** Arguments after `-allowlocalhttp`. */
+  launchArgs: () => string[];
+  /** Writes the configured display settings into the game's video config; returns what it did, for people. */
+  applyDisplay: () => Promise<string>;
   port: () => number;
   /** Starts BT's voice without waiting for it. */
   startVoice: () => void;
@@ -117,6 +120,11 @@ export class Play {
     }
 
     d.startVoice();
+    try {
+      d.log.info('游戏显示设置', { result: await d.applyDisplay() });
+    } catch (err) {
+      d.log.warn('写游戏显示设置失败', { err: String(err) });
+    }
     this.set('launch', '正在启动游戏。');
     launchGame(dir, d.launchArgs(), d.port());
     this.launchedAt = Date.now();

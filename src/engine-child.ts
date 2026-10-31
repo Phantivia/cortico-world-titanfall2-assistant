@@ -35,6 +35,8 @@ process.on('message', (msg: MainToChild) => {
       }));
     case 'focus':
       return reply(import('./capture.ts').then(({ focusGameWindow }) => focusGameWindow()));
+    case 'screen':
+      return reply(import('./screen.ts').then(({ primaryScreen }) => primaryScreen()));
     case 'close':
       sidecar.close();
       reply(Promise.resolve(null));

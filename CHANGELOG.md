@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- 新页签「画面与切窗」:显示模式(无边框窗口、窗口、全屏、保持游戏里的设置)、分辨率(列出主屏支持的)、切到别的窗口时是否继续运行和保留声音、其他启动参数，带启动命令预览。
+- 一键开始在启动前把显示模式和分辨率写进游戏的 `videoconfig.txt`;游戏开着时等下次启动前再写。
+- 配置：新增 `display.mode`、`display.resolution`、`focus.keepRunning`、`focus.sound`。`launchArgs` 默认回到 `-noOriginStartup -novid`,`-noborder` 和切窗参数改由这几项生成。
+
 ## 0.2.2
 
 - 默认启动参数加 `-noborder`:游戏设成窗口模式时就是无边框窗口，桌宠能显示在游戏上面(独占全屏会盖住它)。

@@ -15,6 +15,8 @@ export type EngineRequest =
   | { op: 'capture'; maxWidth: number; quality: number }
   /** Restores and fronts the game window; the reply says whether there was one. */
   | { op: 'focus' }
+  /** The primary screen's resolution and display modes (ScreenModes), or null. */
+  | { op: 'screen' }
   | { op: 'close' };
 
 /** The server post without its one-shot parts. */

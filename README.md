@@ -42,13 +42,19 @@ Owner: `src/definition.ts`
 2. 安装或更新模组。
 3. EA App 没在运行时先启动它，等它的 LSX 端口(127.0.0.1:3216)打开后再等 15 秒让它登录。
 4. 在后台启动 BT 语音：从游戏的 `r2/sound` 截出样片台词，启动 VoxCPM2 服务。
-5. 用 `NorthstarLauncher.exe -allowlocalhttp <launchArgs> +cortico_tf2_port <port>` 启动游戏，窗口出现后恢复并切到前台。游戏停在主菜单，玩家选「继续」或「任务选择」进入战役。
+5. 把「画面与切窗」页签的显示模式和分辨率写进游戏的 `videoconfig.txt`。
+6. 用 `NorthstarLauncher.exe -allowlocalhttp <参数> +cortico_tf2_port <port>` 启动游戏，窗口出现后恢复并切到前台。游戏停在主菜单，玩家选「继续」或「任务选择」进入战役。
+
+「画面与切窗」页签(配置项 `display.*`、`focus.*`、`launchArgs`)管这些，启动命令的预览也在这一页：
+- 显示模式：无边框窗口(默认)、窗口、全屏、保持游戏里的设置。
+  - 游戏的独占全屏会盖住桌宠这类置顶窗口;无边框窗口铺满屏幕，桌宠显示在游戏上面。
+  - 无边框窗口要两样都有：`videoconfig.txt` 里 `setting.fullscreen` 为 0、`setting.nowindowborder` 为 1,以及启动参数 `-noborder`(只改文件游戏仍会画边框)。
+  - 分辨率留空时，无边框和全屏用主屏分辨率，窗口保持游戏里的大小。混合显卡笔记本上独占全屏的分辨率列表可能来自外接屏，所以列不出主屏的分辨率;无边框窗口不受这个限制。
+  - `videoconfig.txt` 在「文档」外壳文件夹(注册表 User Shell Folders 的 Personal,可能不在 C 盘)的 `Respawn\Titanfall2\local\` 下。游戏退出时会把它写回去，所以只在游戏没运行时改。
+- 切到别的窗口时：单人战役默认会暂停、降帧、静音。「继续运行」加 `+sp_not_focus_pause 0 +not_focus_sleep 0`,让玩家在桌宠里打字时 BT 仍能出手和说话;「保留游戏声音」传 `+sound_without_focus 1` 或 `0`,这一项存进游戏的 profile。
+- 其他启动参数：默认 `-noOriginStartup -novid`。Northstar 默认去找 Origin,本机只有 EA App 时会报「failed reading Origin path」,所以加 `-noOriginStartup`。
 
 几点说明：
-- `launchArgs` 默认 `-noOriginStartup -novid -noborder +sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1`:
-  - Northstar 默认去找 Origin,本机只有 EA App 时会报「failed reading Origin path」,所以加 `-noOriginStartup`。
-  - 游戏的独占全屏会盖住桌宠这类置顶窗口。`-noborder` 让窗口模式不带边框，游戏设置里显示模式选窗口、分辨率设成屏幕分辨率，就是铺满屏幕的无边框窗口，桌宠显示在游戏上面。只改 `videoconfig.txt` 的 `setting.nowindowborder` 不会去掉边框。混合显卡笔记本上独占全屏的分辨率列表可能来自外接屏，窗口模式不受这个限制。
-  - 单人战役默认在游戏窗口失去焦点时暂停、降帧、静音。后三项让玩家在桌宠里打字时游戏照常运行，BT 仍能出手和说话;玩家离开窗口时游戏也不会停。`sound_without_focus` 是存进游戏设置的项。
 - EA App 没登录完游戏就会弹出 `#ORIGIN_LOGGED_OUT`,点确定后退出;游戏在启动 90 秒内没进关卡就退出时，面板写明这个原因。
 - BT 语音不随 World 启动：一键开始或有关卡连上时才启动，World 开着不玩游戏时不占显存。
 - 暂停菜单、读图和过场时模组不上报;停止上报超过 10 秒，World 会推一条状态事件。

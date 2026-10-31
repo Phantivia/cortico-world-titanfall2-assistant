@@ -23,7 +23,7 @@ import * as OpenCC from 'opencc-js';
 import { TITANFALL2_ID, titanfall2ConfigGroups, type Titanfall2ConfigSection } from './config.ts';
 import type { CaptureResult, ChildToMain, EngineNotice, EngineRequest, Frame } from './engine-ipc.ts';
 import type { Progress } from './download.ts';
-import { checkGame, eaAppPath, findGameDirs, installMod, NORTHSTAR_VERSION, runningGame, type GameCheck } from './game.ts';
+import { checkGame, eaAppPath, findGameDirs, gameArgs, installMod, NORTHSTAR_VERSION, runningGame, type GameCheck } from './game.ts';
 import {
   Labels, btLine, className, countText, enemiesBlock, enemyText, weaponName as weaponNameOf, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
   type Lookup, type SeenEnemy,
@@ -36,6 +36,8 @@ import { Captions } from './story.ts';
 import { TITANFALL2_TOOL_DECLS } from './tools.ts';
 import { Voice, type VoicePhase } from './voice.ts';
 import { downloadVoiceAssets, voiceAssets } from './voice-assets.ts';
+import type { ScreenModes } from './screen.ts';
+import { readDisplayFile, sameDisplay, targetDisplay, videoConfigFile, writeDisplayFile, type GameDisplay } from './videoconfig.ts';
 
 const ENGINE_FILE = fileURLToPath(new URL('./engine-child.ts', import.meta.url));
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
@@ -233,7 +235,8 @@ export class Titanfall2World implements World {
     this.play = new Play({
       gameDir: async () => this.gameDir() ?? (await this.detectGameDir()),
       workDir: this.opts.dataDir,
-      launchArgs: () => this.cfg.launchArgs,
+      launchArgs: () => gameArgs(this.cfg),
+      applyDisplay: () => this.applyDisplay(),
       port: () => this.cfg.port,
       startVoice: () => this.startVoice(),
       focus: () => this.call<boolean>({ op: 'focus' }).catch(() => false),
@@ -915,6 +918,42 @@ export class Titanfall2World implements World {
 
   /* ---------- game ---------- */
 
+  private screen(): Promise<ScreenModes | null> {
+    return this.cached('screen', 30_000, () => this.call<ScreenModes | null>({ op: 'screen' }).catch(() => null));
+  }
+
+  /** Writes the configured display mode and resolution into the game's video config while the game is not running. */
+  private async applyDisplay(): Promise<string> {
+    if (this.cfg.display.mode === 'game') return '保持游戏里的设置';
+    if ((await runningGame()).length) return '游戏在运行，下次启动前写入';
+    const file = await videoConfigFile();
+    const read = file ? readDisplayFile(file) : null;
+    if (!file || !read) return '游戏还没生成显示设置文件，第一次启动之后生效';
+    if (!read.display) return `看不懂 ${file} 里的显示设置，没有改`;
+    const target = targetDisplay(this.cfg.display, read.display, await this.screen());
+    if (!target || sameDisplay(target, read.display)) return '游戏设置已经是这样';
+    writeDisplayFile(file, read.text, target);
+    return '已写入游戏设置';
+  }
+
+  private async displayState(): Promise<Record<string, unknown>> {
+    const file = await videoConfigFile();
+    const read = file ? readDisplayFile(file) : null;
+    const screen = await this.screen();
+    const target: GameDisplay | null = read?.display ? targetDisplay(this.cfg.display, read.display, screen) : null;
+    return {
+      display: this.cfg.display,
+      focus: this.cfg.focus,
+      launchArgs: this.cfg.launchArgs,
+      command: `NorthstarLauncher.exe -allowlocalhttp ${gameArgs(this.cfg).join(' ')}`,
+      screen,
+      file,
+      game: read?.display ?? null,
+      pending: !!(target && read?.display && !sameDisplay(target, read.display)),
+      running: (await this.cached('running', 2000, runningGame)).length > 0,
+    };
+  }
+
   private gameDir(): string | null {
     const configured = this.cfg.gameDir.trim().replace(/^"|"$/g, '');
     if (configured) return existsSync(configured) ? configured : null;
@@ -977,7 +1016,10 @@ export class Titanfall2World implements World {
         { label: en ? 'BT voice' : 'BT 语音', state: voiceLamp, hint: this.voiceText() },
       ],
       badges: this.map ? [{ label: en ? 'Level' : '关卡', value: mapName(this.map), tone: this.link.server ? 'on' : 'plain' }] : [],
-      panels: [{ id: 'start', title: en ? 'Quick start' : '快速启动', description: en ? 'Start everything with one button; game folder, mod and BT\'s voice.' : '一键开始;游戏目录、模组和 BT 语音。' }],
+      panels: [
+        { id: 'start', title: en ? 'Quick start' : '快速启动', description: en ? 'Start everything with one button; game folder, mod and BT\'s voice.' : '一键开始;游戏目录、模组和 BT 语音。' },
+        { id: 'display', title: en ? 'Display and focus' : '画面与切窗', description: en ? 'Display mode, resolution, and the game while another window has focus.' : '显示模式、分辨率，切到别的窗口时游戏怎么样。' },
+      ],
       invoke: (panel, method, args) => this.invoke(panel, method, args),
       config: titanfall2ConfigGroups(language),
       promptDocs: [
@@ -1043,6 +1085,11 @@ export class Titanfall2World implements World {
   }
 
   private async invoke(panel: string, method: string, args: unknown[] = []): Promise<unknown> {
+    if (panel === 'display') {
+      if (method === 'state') return this.displayState();
+      if (method === 'apply') return this.applyDisplay();
+      throw new Error(`unknown method ${panel}/${method}`);
+    }
     if (panel !== 'start') throw new Error(`unknown panel ${panel}`);
     switch (method) {
       case 'state':

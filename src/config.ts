@@ -4,17 +4,30 @@ import type { WorldSection } from 'cortico/world.ts';
 
 export const TITANFALL2_ID = 'titanfall2';
 
+export const DISPLAY_MODES = ['borderless', 'windowed', 'fullscreen', 'game'] as const;
+export type DisplayMode = (typeof DISPLAY_MODES)[number];
+
 export interface Titanfall2ConfigSection extends WorldSection {
   /** The Titanfall 2 install directory; empty finds the Steam copy. */
   gameDir: string;
   /** Loopback port of the sidecar; the World passes it to the game it launches. */
   port: number;
-  /**
-   * Arguments added to NorthstarLauncher.exe after `-allowlocalhttp`. The defaults make windowed mode borderless,
-   * which other windows such as the pet can draw over, and keep the campaign running and audible while another
-   * window has focus, so BT can act and speak while the player types.
-   */
+  /** Further arguments to NorthstarLauncher.exe; those the display and focus settings call for are added after them. */
   launchArgs: string;
+  /** Written into the game's video config before the World launches it. */
+  display: {
+    /** Exclusive fullscreen hides windows such as the pet; a borderless window the size of the screen does not. `game` leaves the game's own setting. */
+    mode: DisplayMode;
+    /** `<width>x<height>`; empty takes the primary screen's resolution, or keeps the game's in windowed mode. */
+    resolution: string;
+  };
+  /** The game while another window, such as the pet, has focus. Applies from the next launch. */
+  focus: {
+    /** Keeps the campaign running at full frame rate, so BT can act and speak while the player types. */
+    keepRunning: boolean;
+    /** Keeps the game's sound playing. */
+    sound: boolean;
+  };
   intel: {
     /** Least time between two state snapshots in the context. */
     snapshotSec: number;
@@ -91,7 +104,9 @@ export const TITANFALL2_DEFAULTS: Titanfall2ConfigSection = {
   enabled: false,
   gameDir: '',
   port: 27941,
-  launchArgs: '-noOriginStartup -novid -noborder +sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1',
+  launchArgs: '-noOriginStartup -novid',
+  display: { mode: 'borderless', resolution: '' },
+  focus: { keepRunning: true, sound: true },
   intel: { snapshotSec: 20, maxListed: 6, alertCooldownSec: 20, lowHealthPct: 35 },
   support: { missileCount: 6, autoMissileCooldownSec: 15, smokeCooldownSec: 20, pulseCooldownSec: 12, markCooldownSec: 5, markSec: 10 },
   story: { enabled: true, language: 'tchinese', simplified: true, frameSec: 30, frameMaxPx: 1280 },
@@ -126,7 +141,11 @@ export function titanfall2ConfigGroups(language?: string): ConfigGroup[] {
         title: en ? 'Game' : '游戏',
         properties: {
           [`${K}.gameDir`]: { type: 'string', title: en ? 'Game directory' : '游戏目录', description: en ? 'The Titanfall2 folder with Northstar installed. Empty: the Steam copy.' : '装了 Northstar 的 Titanfall2 目录;留空找 Steam 里的那份。', 'x-hot': true },
-          [`${K}.launchArgs`]: { type: 'string', title: en ? 'Launch arguments' : '启动参数', description: en ? 'Added after -allowlocalhttp when the World starts the game.' : 'World 启动游戏时加在 -allowlocalhttp 之后。', 'x-hot': true },
+          [`${K}.display.mode`]: { type: 'string', enum: [...DISPLAY_MODES], title: en ? 'Display mode' : '显示模式', description: en ? 'borderless: a borderless window the size of the screen, the pet shows over it; windowed; fullscreen: exclusive, hides the pet; game: leave the game\'s setting.' : 'borderless 铺满屏幕的无边框窗口，桌宠能显示在上面;windowed 窗口;fullscreen 独占全屏，会盖住桌宠;game 保持游戏里的设置。', 'x-hot': true },
+          [`${K}.display.resolution`]: { type: 'string', title: en ? 'Resolution' : '分辨率', description: en ? 'Like 2560x1600. Empty: the primary screen\'s resolution.' : '形如 2560x1600;留空用主屏分辨率。', 'x-hot': true },
+          [`${K}.focus.keepRunning`]: { type: 'boolean', title: en ? 'Keep running without focus' : '切走窗口时继续运行', description: en ? 'Otherwise the campaign pauses while another window has focus and BT cannot act.' : '关掉时切到别的窗口游戏就暂停，BT 也不能出手和说话。', 'x-hot': true },
+          [`${K}.focus.sound`]: { type: 'boolean', title: en ? 'Sound without focus' : '切走窗口时保留游戏声音', 'x-hot': true },
+          [`${K}.launchArgs`]: { type: 'string', title: en ? 'Other launch arguments' : '其他启动参数', description: en ? 'Passed to NorthstarLauncher.exe before those the settings above add.' : '传给 NorthstarLauncher.exe,排在上面几项生成的参数前面。', 'x-hot': true },
           [`${K}.port`]: { type: 'integer', title: en ? 'Sidecar port' : 'sidecar 端口', minimum: 1024, maximum: 65535, 'x-hot': false },
         },
       },

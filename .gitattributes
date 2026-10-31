@@ -1,0 +1,4 @@
+# 索引一律 LF。
+* text=auto eol=lf
+*.png binary
+*.wav binary

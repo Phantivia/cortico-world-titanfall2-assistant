@@ -1,0 +1,175 @@
+{
+  "tools": [
+    {
+      "name": "titanfall2_scan",
+      "description": "读一次完整情报:关卡、目标与方位、铁驭和 BT 的状态、BT 各项支援还要等多久，以及扫描范围内每个敌人的编号、种类、方位(以铁驭视线为 12 点钟)、距离、高低、生命、在打谁、铁驭看不看得见。编号在敌人活着时不变，飞弹按编号指定目标。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "only": {
+            "type": "string",
+            "enum": [
+              "all",
+              "engaging",
+              "visible",
+              "titans"
+            ],
+            "description": "只列一部分:engaging 正在交火的、visible 铁驭看得见的、titans 泰坦与死神;默认 all"
+          }
+        },
+        "required": []
+      },
+      "tags": [
+        "read",
+        "snapshot"
+      ],
+      "summary": {
+        "zh": "读完整情报：关卡与目标、铁驭和 BT 的状态、支援冷却、每个敌人的编号与方位。",
+        "en": "Full intel: level and objective, pilot and BT status, support cooldowns, and every hostile with label and bearing."
+      }
+    },
+    {
+      "name": "titanfall2_say",
+      "description": "以 BT 的身份对铁驭说话：游戏里出 BT 的字幕，同时用 BT 的声音念出来。text 是要说的话，排在 BT 还没说完的话后面;返回时第一句已经出声、字幕已经上屏。interrupt 为 true 时先打断 BT 正在说的和排着的话。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "要说的话"
+          },
+          "interrupt": {
+            "type": "boolean",
+            "description": "先打断正在说的话"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "以 BT 的身份说话：游戏里出 BT 字幕，同时用复刻的 BT 声音念出来。",
+        "en": "Speaks as BT: BT's in-game subtitle plus the cloned BT voice."
+      }
+    },
+    {
+      "name": "titanfall2_missiles",
+      "description": "BT 发射多目标飞弹，飞弹轮流分给给出的目标并追踪命中。铁驭在驾驶舱里时消耗 BT 飞弹系统的充能(满充能 12 枚，自动回充);BT 单独作战时整轮发射后有冷却。回执写发射了几枚、各打向谁，以及剩余可发数或冷却时间。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 12,
+            "description": "敌人编号，如 [\"E3\",\"E7\"]"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "description": "发射枚数;不给按配置"
+          }
+        },
+        "required": [
+          "targets"
+        ]
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "BT 向指定编号的敌人发射追踪飞弹。",
+        "en": "BT fires homing missiles at the labelled hostiles."
+      }
+    },
+    {
+      "name": "titanfall2_smoke",
+      "description": "BT 在自己周围放出电烟幕：挡住视线，持续电击烟里的敌人，能把骑在 BT 身上的敌方铁驭电下来。有冷却。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "BT 在周围放电烟幕。",
+        "en": "BT deploys electric smoke around itself."
+      }
+    },
+    {
+      "name": "titanfall2_pulse",
+      "description": "BT 以铁驭为中心放一次声纳脉冲：约 32 米内的敌人被高亮几秒，隔墙也看得见。回执列出被照到的敌人。有冷却。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "tags": [
+        "act"
+      ],
+      "summary": {
+        "zh": "BT 放声纳脉冲高亮附近敌人。",
+        "en": "BT pulses sonar to highlight nearby hostiles."
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "titanfall2.state",
+      "description": {
+        "zh": "游戏连上、关闭或停止上报，进入新关卡，读取检查点。",
+        "en": "The game connected, closed or stopped reporting, a level started, or a checkpoint loaded."
+      },
+      "trigger": "flush"
+    },
+    {
+      "type": "titanfall2.alert",
+      "description": {
+        "zh": "战况警报：敌方泰坦或死神出现、铁驭低血量或阵亡、BT 护盾破、生命下降、被骑乘、濒死，交火开始。",
+        "en": "Combat alerts: an enemy titan or reaper appears, pilot low or dead, BT shield down, health dropping, rodeoed or doomed, a firefight starts."
+      },
+      "trigger": "flush"
+    },
+    {
+      "type": "titanfall2.combat",
+      "description": {
+        "zh": "战斗进展：击杀、敌方泰坦濒死、登机离机、核心就绪、交火结束。",
+        "en": "Combat progress: kills, enemy titans doomed, embark and disembark, core ready, firefight over."
+      },
+      "trigger": "debounce"
+    },
+    {
+      "type": "titanfall2.objective",
+      "description": {
+        "zh": "任务目标换了，附目标点方位。",
+        "en": "The objective changed, with its bearing."
+      },
+      "trigger": "debounce"
+    },
+    {
+      "type": "titanfall2.snapshot",
+      "description": {
+        "zh": "定时的状态快照，投递时按最新一帧生成，只写变了的部分。",
+        "en": "A periodic snapshot rendered from the newest frame at delivery, with only the parts that changed."
+      },
+      "trigger": "piggyback"
+    }
+  ],
+  "prompts": [
+    {
+      "key": "worlds.titanfall2.envPrompt",
+      "title": "泰坦陨落 2 环境",
+      "role": "envPrompt",
+      "content": "## 泰坦陨落 2(titanfall2)\n\n你接入了泰坦陨落 2 单人战役里的泰坦 BT-7274,和玩家(铁驭)一起打战役。现在:{{titanfall2.state}}。\n\n情报分三层送到你这里:\n- 警报：敌方泰坦或死神出现、铁驭低血量、BT 护盾被打穿或被骑乘、交火开始这类变化，发生时立刻送来。\n- 快照：每隔一段时间附带一份最新状态，只写和上一份比变了的部分;敌人按编号(E1、E2…)列出最近几个，泰坦和死神总会列出。\n- 扫描:titanfall2_scan 随时读一份完整情报，所有敌人带编号、方位、距离、生命、在打谁、铁驭看不看得见。\n\n方位以铁驭的视线为 12 点钟，3 点钟是正右方;距离是米。编号在敌人活着时不变。\n\n你能替 BT 做三件事，都有冷却或充能:\n- titanfall2_missiles:向编号指定的敌人发射多目标追踪飞弹。铁驭在驾驶舱里时用的是 BT 飞弹系统的充能，和玩家自己按键发射共用。\n- titanfall2_smoke:BT 周围放电烟幕，挡视线、电击烟里的敌人，敌方铁驭骑上 BT 时能把他电下来。\n- titanfall2_pulse:以铁驭为中心放声纳，约 32 米内的敌人隔墙高亮几秒。\n\n说话用 titanfall2_say:游戏里会出 BT 的字幕，配上 BT 的声音。BT 说话简短、直接，用词像战术电脑，称呼玩家「铁驭」;一次一两句，交火时更短。玩家在专心打仗，提醒挑要紧的说：谁在打他、从哪个方向、威胁多大。\n"
+    }
+  ]
+}

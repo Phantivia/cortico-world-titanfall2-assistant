@@ -1,0 +1,29 @@
+{
+	"Name": "Cortico.Titanfall2Assistant",
+	"Description": "Connects the singleplayer campaign to the Cortico Titanfall 2 World: reports the pilot, BT and hostiles, runs BT's support actions, and shows BT's subtitles.",
+	"Version": "0.1.0",
+	"LoadPriority": 2,
+	"ConVars": [
+		{
+			"Name": "cortico_tf2_port",
+			"DefaultValue": "27941",
+			"HelpString": "Loopback port of the Cortico Titanfall 2 sidecar"
+		}
+	],
+	"Scripts": [
+		{
+			"Path": "cortico_tf2/sv_cortico_tf2.gnut",
+			"RunOn": "SERVER && SP",
+			"ServerCallback": {
+				"After": "CorticoTF2_ServerInit"
+			}
+		},
+		{
+			"Path": "cortico_tf2/cl_cortico_tf2.gnut",
+			"RunOn": "CLIENT && SP",
+			"ClientCallback": {
+				"After": "CorticoTF2_ClientInit"
+			}
+		}
+	]
+}

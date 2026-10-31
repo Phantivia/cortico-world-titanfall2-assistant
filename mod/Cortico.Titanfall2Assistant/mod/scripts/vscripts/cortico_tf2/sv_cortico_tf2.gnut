@@ -1,0 +1,543 @@
+// Server VM half of the Cortico Titanfall 2 assistant.
+//
+// Every tick posts the pilot, BT, nearby hostiles and the objective to the sidecar at
+// http://127.0.0.1:<cortico_tf2_port>/server, with the events and command acks gathered since the
+// last post. The reply carries BT support commands (missiles, smoke, pulse); each one is acked in a
+// later post with the same id. Distances stay in game units and angles in degrees; the World
+// converts them. Requests to 127.0.0.1 need the -allowlocalhttp launch argument.
+
+global function CorticoTF2_ServerInit
+
+const float TICK_SEC = 0.25
+const float REQUEST_STALE_SEC = 5.0
+const float SCAN_RADIUS = 8000.0
+const int MAX_ENEMIES = 48
+const int MAX_QUEUED = 96
+const string MISSILE_WEAPON = "mp_titanweapon_shoulder_rockets"
+const float MISSILE_SPEED = 1000.0
+const float MISSILE_HOMING = 300.0
+const float MISSILE_GAP_SEC = 0.12
+
+struct
+{
+	string url
+	bool inFlight = false
+	float sentAt = 0.0
+	int seq = 0
+	array events = []
+	array acks = []
+	table<string, float> readyAt
+} file
+
+void function CorticoTF2_ServerInit()
+{
+	file.url = "http://127.0.0.1:" + GetConVarInt( "cortico_tf2_port" ) + "/server"
+
+	AddCallback_OnPlayerKilled( OnPlayerKilled )
+	AddCallback_OnNPCKilled( OnNPCKilled )
+	AddCallback_OnTitanDoomed( OnTitanDoomed )
+	AddCallback_OnPilotBecomesTitan( OnPilotBecomesTitan )
+	AddCallback_OnTitanBecomesPilot( OnTitanBecomesPilot )
+	AddCallback_OnLoadSaveGame( OnLoadSaveGame )
+
+	PushEvent( { kind = "level" } )
+	thread TickThread()
+}
+
+// ---------- transport ----------
+
+void function TickThread()
+{
+	while ( true )
+	{
+		wait TICK_SEC
+		if ( file.inFlight && Time() - file.sentAt < REQUEST_STALE_SEC )
+			continue
+
+		table body = {}
+		body.v <- 1
+		body.seq <- file.seq
+		body.map <- GetMapName()
+		body.time <- Time()
+		entity player = MainPlayer()
+		if ( IsValid( player ) )
+			FillState( body, player )
+
+		array events = file.events
+		array acks = file.acks
+		file.events = []
+		file.acks = []
+		body.events <- events
+		body.acks <- acks
+
+		file.seq++
+		file.inFlight = true
+		file.sentAt = Time()
+		NSHttpPostBody( file.url, EncodeJSON( body ), OnReply,
+			void function( HttpRequestFailure failure ) : ( events, acks )
+			{
+				file.inFlight = false
+				Requeue( events, acks )
+			} )
+	}
+}
+
+void function Requeue( array events, array acks )
+{
+	foreach ( var e in file.events )
+		events.append( e )
+	foreach ( var a in file.acks )
+		acks.append( a )
+	while ( events.len() > MAX_QUEUED )
+		events.remove( 0 )
+	file.events = events
+	file.acks = acks
+}
+
+void function OnReply( HttpRequestResponse response )
+{
+	file.inFlight = false
+	if ( !NSIsSuccessHttpCode( response.statusCode ) || response.body == "" )
+		return
+	table reply = DecodeJSON( response.body )
+	if ( !( "cmds" in reply ) )
+		return
+	foreach ( var cmd in expect array( reply.cmds ) )
+		RunCommand( expect table( cmd ) )
+}
+
+void function PushEvent( table e )
+{
+	e.time <- Time()
+	file.events.append( e )
+	while ( file.events.len() > MAX_QUEUED )
+		file.events.remove( 0 )
+}
+
+// ---------- state ----------
+
+entity function MainPlayer()
+{
+	array<entity> players = GetPlayerArray()
+	return players.len() > 0 ? players[0] : null
+}
+
+entity function BuddyTitan( entity player )
+{
+	if ( player.IsTitan() )
+		return player
+	return player.GetPetTitan()
+}
+
+array function Vec( vector v )
+{
+	return [ v.x, v.y, v.z ]
+}
+
+table function WeaponState( entity w )
+{
+	table s = {}
+	s.name <- w.GetWeaponClassName()
+	s.title <- w.GetWeaponSettingString( eWeaponVar.printname )
+	s.clip <- w.GetWeaponPrimaryClipCount()
+	s.clipMax <- w.GetWeaponPrimaryClipCountMax()
+	s.stock <- w.GetWeaponPrimaryAmmoCount()
+	s.charge <- w.GetWeaponChargeFraction()
+	return s
+}
+
+array function WeaponList( array<entity> weapons )
+{
+	array list = []
+	foreach ( entity w in weapons )
+	{
+		if ( IsValid( w ) )
+			list.append( WeaponState( w ) )
+	}
+	return list
+}
+
+void function FillState( table body, entity player )
+{
+	table p = {}
+	p.alive <- IsAlive( player )
+	p.hp <- player.GetHealth()
+	p.hpMax <- player.GetMaxHealth()
+	p.titan <- player.IsTitan()
+	p.pos <- Vec( player.GetOrigin() )
+	p.yaw <- player.EyeAngles().y
+	p.team <- player.GetTeam()
+	p.weapons <- WeaponList( player.GetMainWeapons() )
+	p.offhands <- WeaponList( player.GetOffhandWeapons() )
+	entity active = player.GetActiveWeapon()
+	p.active <- IsValid( active ) ? active.GetWeaponClassName() : ""
+	body.player <- p
+
+	entity bt = BuddyTitan( player )
+	if ( IsValid( bt ) )
+		body.bt <- TitanState( player, bt )
+	body.enemies <- ScanEnemies( player, bt )
+	body.objective <- ObjectiveState()
+	body.ready <- ReadyState()
+}
+
+table function TitanState( entity player, entity bt )
+{
+	table t = {}
+	t.embarked <- player.IsTitan()
+	t.alive <- IsAlive( bt )
+	t.hp <- bt.GetHealth()
+	t.hpMax <- bt.GetMaxHealth()
+	t.pos <- Vec( bt.GetOrigin() )
+	entity soul = bt.GetTitanSoul()
+	if ( IsValid( soul ) )
+	{
+		t.shield <- soul.GetShieldHealth()
+		t.shieldMax <- soul.GetShieldHealthMax()
+		t.doomed <- soul.IsDoomed()
+		t.coreValue <- SoulTitanCore_GetNextAvailableTime( soul )
+		t.coreFromDamage <- TitanDamageRewardsTitanCoreTime()
+	}
+	entity rider = GetRodeoPilot( bt )
+	t.rodeo <- IsValid( rider ) && rider.GetTeam() != bt.GetTeam()
+	t.weapons <- WeaponList( bt.GetMainWeapons() )
+	t.offhands <- WeaponList( bt.GetOffhandWeapons() )
+	return t
+}
+
+array function ScanEnemies( entity player, entity bt )
+{
+	vector eye = player.EyePosition()
+	int team = player.GetTeam()
+	array<entity> found = []
+	foreach ( entity npc in GetNPCArray() )
+	{
+		if ( !IsAlive( npc ) || !IsEnemyTeam( team, npc.GetTeam() ) )
+			continue
+		if ( npc.GetClassName() == "npc_bullseye" )
+			continue
+		if ( Distance( eye, npc.GetOrigin() ) > SCAN_RADIUS )
+			continue
+		found.append( npc )
+	}
+	array list = []
+	foreach ( entity npc in ArrayClosest( found, eye ) )
+	{
+		if ( list.len() >= MAX_ENEMIES )
+			break
+		list.append( EnemyState( npc, player, bt, eye ) )
+	}
+	return list
+}
+
+table function EnemyState( entity npc, entity player, entity bt, vector eye )
+{
+	table e = {}
+	e.id <- npc.GetEncodedEHandle()
+	e.cls <- npc.GetClassName()
+	e.pos <- Vec( npc.GetOrigin() )
+	e.hp <- npc.GetHealth()
+	e.hpMax <- npc.GetMaxHealth()
+	entity enemy = npc.GetEnemy()
+	string target = ""
+	if ( IsValid( enemy ) && enemy == player )
+		target = "pilot"
+	else if ( IsValid( enemy ) && IsValid( bt ) && enemy == bt )
+		target = "bt"
+	e.target <- target
+	TraceResults trace = TraceLine( eye, npc.GetWorldSpaceCenter(), [ player, npc ], TRACE_MASK_BLOCKLOS, TRACE_COLLISION_GROUP_NONE )
+	e.los <- trace.fraction > 0.99
+	e.title <- npc.GetSettingTitle()
+	if ( npc.IsTitan() )
+	{
+		entity soul = npc.GetTitanSoul()
+		if ( IsValid( soul ) )
+		{
+			e.shield <- soul.GetShieldHealth()
+			e.doomed <- soul.IsDoomed()
+		}
+		if ( IsMercTitan( npc ) )
+		{
+			int bossId = GetMercCharacterID( npc )
+			e.boss <- GetBossNameFromID( bossId )
+			e.bossTitle <- GetBossTitleFromID( bossId )
+		}
+	}
+	return e
+}
+
+table function ObjectiveState()
+{
+	table o = {}
+	int index = GetGlobalNetInt( "objectiveStringIndex" )
+	o.index <- index
+	entity marker = GetGlobalNetEnt( "objectiveMarkerEntity" )
+	if ( GetGlobalNetBool( "showObjectiveLine" ) && IsValid( marker ) )
+		o.pos <- Vec( marker.GetOrigin() )
+	return o
+}
+
+table function ReadyState()
+{
+	table r = {}
+	foreach ( string op, float at in file.readyAt )
+		r[ op ] <- max( 0.0, at - Time() )
+	return r
+}
+
+// ---------- events ----------
+
+string function WhoOf( entity ent )
+{
+	entity player = MainPlayer()
+	if ( !IsValid( ent ) || !IsValid( player ) )
+		return ""
+	if ( ent == player )
+		return "pilot"
+	entity bt = player.GetPetTitan()
+	if ( IsValid( bt ) && ent == bt )
+		return "bt"
+	if ( ent.GetOwner() == player || ent.GetBossPlayer() == player )
+		return "pilot"
+	return ent.GetClassName()
+}
+
+void function OnPlayerKilled( entity victim, entity attacker, var damageInfo )
+{
+	PushEvent( { kind = "pilot_died", by = WhoOf( attacker ), source = DamageInfo_GetDamageSourceIdentifier( damageInfo ) } )
+}
+
+void function OnNPCKilled( entity victim, entity attacker, var damageInfo )
+{
+	entity player = MainPlayer()
+	if ( !IsValid( player ) || !IsEnemyTeam( player.GetTeam(), victim.GetTeam() ) )
+		return
+	string by = WhoOf( attacker )
+	if ( by != "pilot" && by != "bt" && !victim.IsTitan() )
+		return
+	table e = { kind = "kill", cls = victim.GetClassName(), by = by }
+	if ( victim.IsTitan() && IsMercTitan( victim ) )
+		e.boss <- GetBossNameFromID( GetMercCharacterID( victim ) )
+	PushEvent( e )
+}
+
+void function OnTitanDoomed( entity victim, var damageInfo )
+{
+	entity player = MainPlayer()
+	if ( !IsValid( player ) )
+		return
+	if ( victim == player || victim == player.GetPetTitan() )
+	{
+		PushEvent( { kind = "bt_doomed", by = WhoOf( DamageInfo_GetAttacker( damageInfo ) ) } )
+		return
+	}
+	if ( !IsEnemyTeam( player.GetTeam(), victim.GetTeam() ) )
+		return
+	table e = { kind = "titan_doomed", id = victim.GetEncodedEHandle(), by = WhoOf( DamageInfo_GetAttacker( damageInfo ) ) }
+	if ( IsMercTitan( victim ) )
+		e.boss <- GetBossNameFromID( GetMercCharacterID( victim ) )
+	PushEvent( e )
+}
+
+void function OnPilotBecomesTitan( entity pilot, entity npcTitan )
+{
+	if ( pilot.IsPlayer() )
+		PushEvent( { kind = "embark" } )
+}
+
+void function OnTitanBecomesPilot( entity pilot, entity npcTitan )
+{
+	if ( pilot.IsPlayer() )
+		PushEvent( { kind = "disembark" } )
+}
+
+void function OnLoadSaveGame( entity player )
+{
+	PushEvent( { kind = "save_loaded" } )
+}
+
+// ---------- commands ----------
+
+int function AsInt( var v )
+{
+	if ( typeof v == "float" )
+		return ( expect float( v ) ).tointeger()
+	return expect int( v )
+}
+
+float function AsFloat( var v )
+{
+	if ( typeof v == "int" || typeof v == "integer" )
+		return ( expect int( v ) ).tofloat()
+	return expect float( v )
+}
+
+table function Fail( string reason )
+{
+	return { ok = false, reason = reason }
+}
+
+void function RunCommand( table cmd )
+{
+	table result
+	string op = expect string( cmd.op )
+	entity player = MainPlayer()
+	if ( !IsValid( player ) || !IsAlive( player ) )
+		result = Fail( "no_pilot" )
+	else if ( op == "missiles" )
+		result = CmdMissiles( player, cmd )
+	else if ( op == "smoke" )
+		result = CmdSmoke( player, cmd )
+	else if ( op == "pulse" )
+		result = CmdPulse( player, cmd )
+	else
+		result = Fail( "unknown_op" )
+	result.id <- cmd.id
+	file.acks.append( result )
+}
+
+entity function FindOffhand( entity titan, string name )
+{
+	foreach ( entity w in titan.GetOffhandWeapons() )
+	{
+		if ( IsValid( w ) && w.GetWeaponClassName() == name )
+			return w
+	}
+	return null
+}
+
+bool function CoolingDown( string op )
+{
+	return op in file.readyAt && Time() < file.readyAt[ op ]
+}
+
+void function StartCooldown( string op, table cmd )
+{
+	float sec = ( "cooldownSec" in cmd ) ? AsFloat( cmd.cooldownSec ) : 0.0
+	file.readyAt[ op ] <- Time() + sec
+}
+
+table function CmdMissiles( entity player, table cmd )
+{
+	entity bt = BuddyTitan( player )
+	if ( !IsValid( bt ) || !IsAlive( bt ) )
+		return Fail( "no_titan" )
+	entity weapon = FindOffhand( bt, MISSILE_WEAPON )
+	if ( !IsValid( weapon ) )
+		return Fail( "no_missiles" )
+	if ( !bt.IsPlayer() && CoolingDown( "missiles" ) )
+		return Fail( "cooldown" )
+
+	array<entity> targets = []
+	foreach ( var h in expect array( cmd.targets ) )
+	{
+		entity e = GetEntityFromEncodedEHandle( AsInt( h ) )
+		if ( IsValid( e ) && IsAlive( e ) )
+			targets.append( e )
+	}
+	if ( targets.len() == 0 )
+		return Fail( "no_targets" )
+
+	int burst = weapon.GetWeaponSettingInt( eWeaponVar.smart_ammo_max_targeted_burst )
+	float used = weapon.GetWeaponChargeFraction()
+	int available = burst
+	if ( bt.IsPlayer() )
+		available = ( ( 1.0 - used ) * burst + 0.001 ).tointeger()
+	if ( available <= 0 )
+		return { ok = false, reason = "charging", charge = used }
+	int count = minint( maxint( AsInt( cmd.count ), 1 ), available )
+
+	if ( bt.IsPlayer() )
+		weapon.SetWeaponChargeFractionForced( min( 1.0, used + count.tofloat() / burst.tofloat() ) )
+	else
+		StartCooldown( "missiles", cmd )
+	thread FireVolley( bt, weapon, targets, count )
+	return { ok = true, fired = count, targets = targets.len(), burst = burst }
+}
+
+void function FireVolley( entity bt, entity weapon, array<entity> targets, int count )
+{
+	bt.EndSignal( "OnDeath" )
+	bt.EndSignal( "OnDestroy" )
+	weapon.EndSignal( "OnDestroy" )
+	for ( int i = 0; i < count; i++ )
+	{
+		entity target = targets[ i % targets.len() ]
+		if ( IsValid( target ) && IsAlive( target ) )
+			FireMissile( bt, weapon, target, i )
+		wait MISSILE_GAP_SEC
+	}
+}
+
+void function FireMissile( entity bt, entity weapon, entity target, int index )
+{
+	vector facing = bt.IsPlayer() ? bt.EyeAngles() : bt.GetAngles()
+	vector flat = < 0.0, facing.y, 0.0 >
+	vector right = AnglesToRight( flat )
+	float side = ( index % 2 == 0 ) ? 1.0 : -1.0
+	vector origin = bt.GetOrigin() + < 0.0, 0.0, 230.0 > + right * ( 60.0 * side )
+	vector toTarget = Normalize( target.GetWorldSpaceCenter() - origin )
+	vector dir = Normalize( toTarget + < 0.0, 0.0, 0.9 > + right * ( 0.35 * side ) )
+
+	entity missile = weapon.FireWeaponMissile( origin, dir, MISSILE_SPEED, damageTypes.projectileImpact, damageTypes.explosive, false, PROJECTILE_NOT_PREDICTED )
+	if ( !IsValid( missile ) )
+		return
+	missile.SetMissileTarget( target, < 0.0, 0.0, 0.0 > )
+	missile.SetHomingSpeeds( MISSILE_HOMING, 0 )
+	if ( bt.IsPlayer() )
+		EmitSoundOnEntityOnlyToPlayer( bt, bt, "ShoulderRocket_Paint_Fire_1P" )
+	else
+		EmitSoundOnEntity( bt, "ShoulderRocket_Paint_Fire_3P" )
+}
+
+table function CmdSmoke( entity player, table cmd )
+{
+	entity bt = BuddyTitan( player )
+	if ( !IsValid( bt ) || !IsAlive( bt ) )
+		return Fail( "no_titan" )
+	if ( CoolingDown( "smoke" ) )
+		return Fail( "cooldown" )
+	entity weapon = bt.GetActiveWeapon()
+	if ( !IsValid( weapon ) )
+	{
+		array<entity> mains = bt.GetMainWeapons()
+		if ( mains.len() == 0 )
+			return Fail( "no_weapon" )
+		weapon = mains[0]
+	}
+
+	vector facing = bt.IsPlayer() ? bt.EyeAngles() : bt.GetAngles()
+	SmokescreenStruct smokescreen
+	smokescreen.isElectric = true
+	smokescreen.ownerTeam = bt.GetTeam()
+	smokescreen.attacker = bt
+	smokescreen.inflictor = bt
+	smokescreen.weaponOrProjectile = weapon
+	smokescreen.damageInnerRadius = 320.0
+	smokescreen.damageOuterRadius = 375.0
+	smokescreen.dpsPilot = 45
+	smokescreen.dpsTitan = 450
+	smokescreen.damageDelay = 1.0
+	smokescreen.angles = < 0.0, facing.y, 0.0 >
+	smokescreen.origin = bt.GetOrigin()
+	float offset = 200.0
+	float height = 148.0
+	smokescreen.fxOffsets = [ < offset, 0.0, 20.0 >, < -offset, 0.0, 20.0 >, < 0.0, offset, 20.0 >, < 0.0, -offset, 20.0 >, < 0.0, 0.0, height >, < -offset, 0.0, height > ]
+	Smokescreen( smokescreen )
+	StartCooldown( "smoke", cmd )
+	return { ok = true }
+}
+
+table function CmdPulse( entity player, table cmd )
+{
+	entity bt = BuddyTitan( player )
+	if ( !IsValid( bt ) || !IsAlive( bt ) )
+		return Fail( "no_titan" )
+	if ( CoolingDown( "pulse" ) )
+		return Fail( "cooldown" )
+	vector pos = player.GetOrigin()
+	PulseLocation( bt, bt.GetTeam(), pos, false, false )
+	EmitSoundAtPosition( TEAM_UNASSIGNED, pos, "Titan_Tone_SonarLock_Impact_Pulse_3P" )
+	StartCooldown( "pulse", cmd )
+	return { ok = true }
+}

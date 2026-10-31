@@ -1,0 +1,125 @@
+// Client VM half of the Cortico Titanfall 2 assistant.
+//
+// Polls http://127.0.0.1:<cortico_tf2_port>/client. A reply may carry a subtitle (lines already
+// wrapped by the sidecar, its duration and style) and string tokens to localize; the next poll
+// returns the localized strings and the current objective in the game's language.
+
+global function CorticoTF2_ClientInit
+
+const float POLL_SEC = 0.15
+const float REQUEST_STALE_SEC = 5.0
+
+struct
+{
+	string url
+	bool inFlight = false
+	float sentAt = 0.0
+	array<var> ruis
+	float hideAt = 0.0
+	table localized = {}
+} file
+
+void function CorticoTF2_ClientInit()
+{
+	file.url = "http://127.0.0.1:" + GetConVarInt( "cortico_tf2_port" ) + "/client"
+	thread PollThread()
+}
+
+void function PollThread()
+{
+	while ( true )
+	{
+		wait POLL_SEC
+		if ( file.ruis.len() > 0 && Time() >= file.hideAt )
+			HideSubtitle()
+		if ( file.inFlight && Time() - file.sentAt < REQUEST_STALE_SEC )
+			continue
+
+		table body = {}
+		body.map <- GetMapName()
+		body.objective <- ObjectiveText()
+		body.subtitle <- file.ruis.len() > 0
+		body.localized <- file.localized
+		file.localized = {}
+
+		file.inFlight = true
+		file.sentAt = Time()
+		NSHttpPostBody( file.url, EncodeJSON( body ), OnReply,
+			void function( HttpRequestFailure failure )
+			{
+				file.inFlight = false
+			} )
+	}
+}
+
+string function ObjectiveText()
+{
+	if ( !ObjectiveStringsReady() )
+		return ""
+	int index = GetGlobalNetInt( "objectiveStringIndex" )
+	if ( index <= 0 )
+		return ""
+	return Localize( GetObjectiveStringFromID( index ) )
+}
+
+float function AsFloat( var v )
+{
+	if ( typeof v == "int" || typeof v == "integer" )
+		return ( expect int( v ) ).tofloat()
+	return expect float( v )
+}
+
+void function OnReply( HttpRequestResponse response )
+{
+	file.inFlight = false
+	if ( !NSIsSuccessHttpCode( response.statusCode ) || response.body == "" )
+		return
+	table reply = DecodeJSON( response.body )
+	if ( "localize" in reply )
+	{
+		foreach ( var token in expect array( reply.localize ) )
+		{
+			string t = expect string( token )
+			file.localized[ t ] <- Localize( t )
+		}
+	}
+	if ( "hide" in reply )
+		HideSubtitle()
+	if ( "subtitle" in reply )
+		ShowSubtitle( expect table( reply.subtitle ) )
+}
+
+// The text RUI the campaign uses for helmet readouts; every line is its own RUI at the same
+// position, stacked by lineNum.
+void function ShowSubtitle( table sub )
+{
+	HideSubtitle()
+	array lines = expect array( sub.lines )
+	array pos = expect array( sub.pos )
+	array color = expect array( sub.color )
+	vector msgPos = < AsFloat( pos[0] ), AsFloat( pos[1] ), 0.0 >
+	vector msgColor = < AsFloat( color[0] ), AsFloat( color[1] ), AsFloat( color[2] ) >
+	float size = AsFloat( sub.size )
+	float alpha = AsFloat( sub.alpha )
+	for ( int i = 0; i < lines.len(); i++ )
+	{
+		var rui = RuiCreate( $"ui/cockpit_console_text_center.rpak", clGlobal.topoFullScreen, RUI_DRAW_HUD, 0 )
+		RuiSetInt( rui, "maxLines", lines.len() )
+		RuiSetInt( rui, "lineNum", i )
+		RuiSetFloat2( rui, "msgPos", msgPos )
+		RuiSetString( rui, "msgText", expect string( lines[i] ) )
+		RuiSetFloat( rui, "msgFontSize", size )
+		RuiSetFloat( rui, "msgAlpha", alpha )
+		RuiSetFloat( rui, "thicken", 0.0 )
+		RuiSetFloat3( rui, "msgColor", msgColor )
+		file.ruis.append( rui )
+	}
+	file.hideAt = Time() + AsFloat( sub.sec )
+}
+
+void function HideSubtitle()
+{
+	foreach ( var rui in file.ruis )
+		RuiDestroyIfAlive( rui )
+	file.ruis.clear()
+}

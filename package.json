@@ -1,0 +1,72 @@
+{
+  "name": "cortico-world-titanfall2-assistant",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Cortico World for the Titanfall 2 campaign: Coo rides along as BT with live intel on the pilot, BT and hostiles, fires BT's missiles, smoke and sonar, and speaks in BT's voice and subtitles, through a Northstar mod and a sidecar.",
+  "author": "Phantivia",
+  "license": "MIT",
+  "keywords": [
+    "cortico-world",
+    "cortico",
+    "game",
+    "titanfall-2",
+    "northstar"
+  ],
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.5.0",
+  "main": "./src/index.ts",
+  "cortico": {
+    "kind": "world",
+    "api": 6,
+    "displayName": "Titanfall 2 Assistant",
+    "webUiClient": "dist/webui.js",
+    "tags": [
+      "game",
+      "voice",
+      "experimental"
+    ],
+    "locales": {
+      "zh": {
+        "displayName": "泰坦陨落 2 陪玩",
+        "description": "让 Coo 接入泰坦陨落 2 单人战役里的 BT:实时掌握铁驭、BT 和敌人的情报并提醒玩家，主动发射 BT 的多目标飞弹、电烟幕和声纳脉冲，用游戏里的 BT 字幕和 VoxCPM2 复刻的 BT 声音说话。经 Northstar 模组与 sidecar 进程连接。游戏需自备。仅 Windows。"
+      },
+      "en": {
+        "displayName": "Titanfall 2 Assistant",
+        "description": "Puts Coo into BT in the Titanfall 2 campaign: live intel on the pilot, BT and hostiles with call-outs, BT's multi-target missiles, electric smoke and sonar pulse on demand, and BT's in-game subtitles with a VoxCPM2 clone of BT's voice. Connects through a Northstar mod and a sidecar process. Bring your own copy of the game. Windows only."
+      }
+    },
+    "describe": "describe.json"
+  },
+  "files": [
+    "src",
+    "dist",
+    "mod",
+    "scripts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "describe.json"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:webui": "node scripts/build-webui.mjs",
+    "prepack": "node scripts/build-webui.mjs"
+  },
+  "dependencies": {
+    "audify": "^1.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "cortico": "^0.2.11",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
+}

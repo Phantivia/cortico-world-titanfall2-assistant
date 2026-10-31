@@ -43,7 +43,7 @@ void function PollThread()
 
 		table body = {}
 		body.map <- GetMapName()
-		body.objective <- ObjectiveText()
+		try { body.objective <- ObjectiveText() } catch ( ex ) { body.objective <- "" }
 		body.subtitle <- file.ruis.len() > 0
 		body.localized <- file.localized
 		file.localized = {}

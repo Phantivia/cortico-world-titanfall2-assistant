@@ -87,7 +87,7 @@ export const TITANFALL2_DEFAULTS: Titanfall2ConfigSection = {
   enabled: false,
   gameDir: '',
   port: 27941,
-  launchArgs: '-noOriginStartup',
+  launchArgs: '-noOriginStartup -novid',
   intel: { snapshotSec: 20, maxListed: 6, alertCooldownSec: 20, lowHealthPct: 35 },
   support: { missileCount: 6, autoMissileCooldownSec: 15, smokeCooldownSec: 20, pulseCooldownSec: 12, markCooldownSec: 5, markSec: 10 },
   story: { enabled: true, language: 'tchinese', simplified: true, frameSec: 30, frameMaxPx: 1280 },

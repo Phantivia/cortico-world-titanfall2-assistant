@@ -69,9 +69,9 @@ export interface EnemyFrame {
   bossTitle?: string;
 }
 
-/** A pilot helmet collectible or a BT loadout pickup still in the level. */
+/** A pilot helmet collectible, a BT loadout pickup, or a titan battery on the ground. */
 export interface PoiFrame {
-  kind: 'helmet' | 'loadout';
+  kind: 'helmet' | 'loadout' | 'battery';
   pos: Vec3;
   /** The titan weapon of a loadout pickup. */
   weapon?: string;
@@ -105,7 +105,7 @@ export type CommandOp = 'missiles' | 'smoke' | 'pulse' | 'mark' | 'focus';
 export interface CommandAck {
   id: number;
   ok: boolean;
-  reason?: 'no_pilot' | 'no_titan' | 'no_missiles' | 'no_targets' | 'cooldown' | 'charging' | 'no_weapon' | 'embarked' | 'unknown_op';
+  reason?: 'no_pilot' | 'no_titan' | 'no_missiles' | 'no_targets' | 'cooldown' | 'charging' | 'no_weapon' | 'embarked' | 'script_error' | 'unknown_op';
   fired?: number;
   targets?: number;
   burst?: number;
@@ -122,12 +122,16 @@ export interface ServerPost {
   bt?: TitanFrame;
   enemies?: EnemyFrame[];
   objective?: ObjectiveFrame;
+  /** The level's current start point: the section the campaign reached, e.g. "BT_Intro". */
+  section?: string;
   /** Seconds until the World-cooled support actions are ready again. */
   ready?: Partial<Record<CommandOp, number>>;
   pois?: PoiFrame[];
   threats?: ThreatFrame[];
   events: GameEvent[];
   acks: CommandAck[];
+  /** Script errors in the mod since the last post, one per failed reading or command. */
+  errors?: string[];
 }
 
 export interface ServerCommand {

@@ -4,7 +4,8 @@
 // http://127.0.0.1:<cortico_tf2_port>/server, with the events and command acks gathered since the
 // last post. The reply carries BT support commands (missiles, smoke, pulse, mark, focus); each one is
 // acked in a later post with the same id. Points of interest (pilot helmet collectibles, BT loadout
-// pickups) are looked up once per level load and after each save load. Distances stay in game units and angles in degrees; the World
+// pickups) are looked up once per level load and after each save load; batteries lying on the
+// ground every BATTERY_SCAN_TICKS ticks. Distances stay in game units and angles in degrees; the World
 // converts them. Requests to 127.0.0.1 need the -allowlocalhttp launch argument.
 
 global function CorticoTF2_ServerInit
@@ -19,6 +20,7 @@ const float MISSILE_SPEED = 1000.0
 const float MISSILE_HOMING = 300.0
 const float MISSILE_GAP_SEC = 0.12
 const float THREAT_RADIUS = 600.0
+const int BATTERY_SCAN_TICKS = 8
 const string HELMET_EDITOR_CLASS = "script_collectible"
 // titan weapons whose loadout BT can pick up in the campaign
 const array<string> LOADOUT_WEAPONS = [ "mp_titanweapon_xo16_shorty", "mp_titanweapon_sticky_40mm", "mp_titanweapon_meteor", "mp_titanweapon_leadwall", "mp_titanweapon_rocketeer_rocketstream", "mp_titanweapon_particle_accelerator", "mp_titanweapon_sniper", "mp_titanweapon_predator_cannon" ]
@@ -31,12 +33,15 @@ struct
 	int seq = 0
 	array events = []
 	array acks = []
+	// script errors since the last post, so one failing reading does not stop the reports
+	array errors = []
 	table<string, float> readyAt
 	// encoded handle -> entity of the last scan; commands name targets by these handles
 	table<int, entity> scanned
 	array<entity> helmets
 	array<entity> loadoutPickups
 	array<string> loadoutPickupWeapons
+	array<entity> batteries
 } file
 
 void function CorticoTF2_ServerInit()
@@ -73,6 +78,8 @@ void function TickThread()
 		entity player = MainPlayer()
 		if ( IsValid( player ) )
 			FillState( body, player )
+		body.errors <- file.errors
+		file.errors = []
 
 		array events = file.events
 		array acks = file.acks
@@ -81,6 +88,10 @@ void function TickThread()
 		body.events <- events
 		body.acks <- acks
 
+		if ( file.seq % BATTERY_SCAN_TICKS == 0 )
+		{
+			try { FindBatteries() } catch ( err1 ) { Report( "batteries", err1 ) }
+		}
 		file.seq++
 		file.inFlight = true
 		file.sentAt = Time()
@@ -115,6 +126,12 @@ void function OnReply( HttpRequestResponse response )
 		return
 	foreach ( var cmd in expect array( reply.cmds ) )
 		RunCommand( expect table( cmd ) )
+}
+
+void function Report( string where, var ex )
+{
+	if ( file.errors.len() < 8 )
+		file.errors.append( where + ": " + ex )
 }
 
 void function PushEvent( table e )
@@ -185,13 +202,13 @@ void function FillState( table body, entity player )
 	body.player <- p
 
 	entity bt = BuddyTitan( player )
-	if ( IsValid( bt ) )
-		body.bt <- TitanState( player, bt )
-	body.enemies <- ScanEnemies( player, bt )
-	body.objective <- ObjectiveState()
+	try { if ( IsValid( bt ) ) body.bt <- TitanState( player, bt ) } catch ( err2 ) { Report( "bt", err2 ) }
+	try { body.enemies <- ScanEnemies( player, bt ) } catch ( err3 ) { Report( "enemies", err3 ) }
+	try { body.objective <- ObjectiveState() } catch ( err4 ) { Report( "objective", err4 ) }
+	try { body.section <- GetCurrentStartPoint() } catch ( err5 ) { Report( "section", err5 ) }
 	body.ready <- ReadyState()
-	body.pois <- PoiState()
-	body.threats <- ThreatState( player )
+	try { body.pois <- PoiState() } catch ( err6 ) { Report( "pois", err6 ) }
+	try { body.threats <- ThreatState( player ) } catch ( err7 ) { Report( "threats", err7 ) }
 }
 
 table function TitanState( entity player, entity bt )
@@ -319,9 +336,24 @@ void function FindPointsOfInterest()
 	}
 }
 
+void function FindBatteries()
+{
+	file.batteries.clear()
+	foreach ( entity ent in GetEntArrayByClass_Expensive( "item_titan_battery" ) )
+	{
+		if ( IsValid( ent ) && !IsValid( ent.GetParent() ) )
+			file.batteries.append( ent )
+	}
+}
+
 array function PoiState()
 {
 	array list = []
+	foreach ( entity ent in file.batteries )
+	{
+		if ( IsValid( ent ) && !IsValid( ent.GetParent() ) )
+			list.append( { kind = "battery", pos = Vec( ent.GetOrigin() ) } )
+	}
 	foreach ( entity ent in file.helmets )
 	{
 		if ( IsValid( ent ) )
@@ -458,19 +490,34 @@ void function RunCommand( table cmd )
 	if ( !IsValid( player ) || !IsAlive( player ) )
 		result = Fail( "no_pilot" )
 	else if ( op == "missiles" )
-		result = CmdMissiles( player, cmd )
-	else if ( op == "smoke" )
-		result = CmdSmoke( player, cmd )
-	else if ( op == "pulse" )
-		result = CmdPulse( player, cmd )
-	else if ( op == "mark" )
-		result = CmdMark( player, cmd )
-	else if ( op == "focus" )
-		result = CmdFocus( player, cmd )
+		result = Guarded( op, player, cmd )
+	else if ( op == "smoke" || op == "pulse" || op == "mark" || op == "focus" )
+		result = Guarded( op, player, cmd )
 	else
 		result = Fail( "unknown_op" )
 	result.id <- cmd.id
 	file.acks.append( result )
+}
+
+table function Guarded( string op, entity player, table cmd )
+{
+	try
+	{
+		if ( op == "missiles" )
+			return CmdMissiles( player, cmd )
+		if ( op == "smoke" )
+			return CmdSmoke( player, cmd )
+		if ( op == "pulse" )
+			return CmdPulse( player, cmd )
+		if ( op == "mark" )
+			return CmdMark( player, cmd )
+		return CmdFocus( player, cmd )
+	}
+	catch ( ex )
+	{
+		Report( op, ex )
+	}
+	return Fail( "script_error" )
 }
 
 entity function FindOffhand( entity titan, string name )

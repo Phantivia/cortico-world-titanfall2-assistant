@@ -23,7 +23,7 @@ import { TITANFALL2_ID, titanfall2ConfigGroups, type Titanfall2ConfigSection } f
 import type { CaptureResult, ChildToMain, EngineNotice, EngineRequest, Frame } from './engine-ipc.ts';
 import { checkGame, findGameDirs, installMod, launchGame, runningGame, type GameCheck } from './game.ts';
 import {
-  Labels, btLine, className, enemiesBlock, enemyText, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
+  Labels, btLine, className, enemiesBlock, enemyText, weaponName as weaponNameOf, frameTokens, mapName, meters, objectiveLine, pct, pilotLine, readiness, relative, seenEnemies, whereText,
   type Lookup, type SeenEnemy,
 } from './intel.ts';
 import { Player } from './player.ts';
@@ -47,10 +47,13 @@ const COMBAT_END_MS = 10_000;
 const COMBAT_NEAR_M = 40;
 /** SONAR_PULSE_RADIUS of mp_titanability_sonar_pulse, in game units. */
 const PULSE_RADIUS_UNITS = 1250;
+/** A battery this close is worth mentioning while BT is below half health. */
+const BATTERY_NEAR_M = 40;
 const IMAGE_MIME = 'image/jpeg';
 const JPEG_QUALITY = 80;
 /** Lines kept for one story event; older ones are dropped when nothing delivers them. */
 const STORY_LINE_MAX = 40;
+const LINE_REPEAT_MS = 10_000;
 /** Subtitle RUI metrics in font-size units, measured in game: a CJK character and a line. */
 const CHAR_UNIT = 0.76;
 const LINE_UNIT = 1.3;
@@ -89,6 +92,7 @@ const FAIL_TEXT: Record<NonNullable<CommandAck['reason']>, string> = {
   charging: '飞弹系统充能不足',
   no_weapon: 'BT 手上没有武器',
   embarked: '铁驭正在驾驶 BT,BT 的攻击由铁驭决定',
+  script_error: '模组执行时出错(详情在运行日志)',
   unknown_op: '游戏里的模组不认识这个指令(模组版本不对)',
 };
 
@@ -124,7 +128,11 @@ export class Titanfall2World implements World {
   private readonly asked = new Set<string>();
   private readonly labels = new Labels();
   private readonly lookup: Lookup = {
-    text: (t) => (!t ? null : t.startsWith('#') ? this.localized.get(t) ?? null : t),
+    text: (t) => {
+      if (!t) return null;
+      const text = t.startsWith('#') ? this.localized.get(t) ?? null : t;
+      return text && this.cfg.story.simplified ? toSimplified(text) : text;
+    },
   };
 
   /* alert edges */
@@ -146,6 +154,7 @@ export class Titanfall2World implements World {
   private captionsKey = '';
   private storyLines: string[] = [];
   private storyArmed = false;
+  private lastLine: { alias: string; at: number } | null = null;
   private lastFrameAt = 0;
   /** Attach a frame to the next story event regardless of the interval (new level, new objective). */
   private frameDue = true;
@@ -315,10 +324,12 @@ export class Titanfall2World implements World {
     if (side !== 'server') return;
     if (up) {
       this.linkDownAt = null;
+      // frames from before the gap may belong to another level; the next post brings a fresh one
+      this.frame = null;
       if (!this.everUp || this.linkDownReported) {
         this.everUp = true;
         this.linkDownReported = false;
-        this.emit('titanfall2.state', `游戏连上了。${this.frame ? `现在在 ${mapName(this.frame.map)}。` : ''}`, 'flush');
+        this.emit('titanfall2.state', '游戏连上了。', 'flush');
         this.host?.log.info('游戏已连上');
       }
     } else {
@@ -326,8 +337,15 @@ export class Titanfall2World implements World {
     }
   }
 
+  private readonly modErrorsLogged = new Set<string>();
+
   private onFrame(frame: Frame): void {
     const prev = this.frame;
+    for (const err of frame.errors ?? []) {
+      if (this.modErrorsLogged.has(err) || this.modErrorsLogged.size > 50) continue;
+      this.modErrorsLogged.add(err);
+      this.log?.warn('模组脚本出错', { err });
+    }
     if (frame.map !== this.map) {
       const first = this.map === '';
       this.map = frame.map;
@@ -345,7 +363,13 @@ export class Titanfall2World implements World {
       for (const t of tokens) this.asked.add(t);
       void this.call({ op: 'localize', tokens }).catch(() => undefined);
     }
-    if (prev && prev.map === frame.map) this.edgeAlerts(prev, frame);
+    if (prev && prev.map === frame.map) {
+      if (frame.section && prev.section && frame.section !== prev.section) {
+        this.frameDue = true;
+        this.emit('titanfall2.story', `剧情推进到这一关的「${frame.section}」段。`, 'piggyback');
+      }
+      this.edgeAlerts(prev, frame);
+    }
   }
 
   private onClient(post: ClientPost): void {
@@ -353,13 +377,14 @@ export class Titanfall2World implements World {
       this.localized.set(k, v);
       this.asked.delete(k);
     }
-    const objective = (post.objective ?? '').trim();
+    const raw = (post.objective ?? '').trim();
+    const objective = (raw && this.cfg.story.simplified ? toSimplified(raw) : raw).replace(/[。.]+$/, '');
     if (objective !== this.objective) {
       const had = this.objective;
       this.objective = objective;
       if (objective && this.frame) {
         this.frameDue = true;
-        this.emit('titanfall2.objective', `新目标:${objective}${had ? `(上一个目标是「${had}」)` : ''}。${this.objectiveWhere()}`, 'debounce');
+        this.emit('titanfall2.objective', `新目标:「${objective}」${had ? `,上一个目标是「${had}」` : ''}。${this.objectiveWhere()}`, 'debounce');
       }
     }
     if (post.dialogue?.length && this.cfg.story.enabled) this.onDialogue(post.dialogue.map((d) => d.alias));
@@ -387,7 +412,11 @@ export class Titanfall2World implements World {
   /** Queues the lines' captions and arms one deferred story event for them. */
   private onDialogue(aliases: string[]): void {
     const table = this.captionTable();
+    const now = Date.now();
     for (const alias of aliases) {
+      // the game replays some lines back to back; one copy is enough
+      if (this.lastLine?.alias === alias && now - this.lastLine.at < LINE_REPEAT_MS) continue;
+      this.lastLine = { alias, at: now };
       const cap = table?.get(alias);
       if (!cap || !cap.text) continue;
       const conv = (t: string): string => (this.cfg.story.simplified ? toSimplified(t) : t);
@@ -486,6 +515,25 @@ export class Titanfall2World implements World {
         if (r.meters > near) continue;
         this.helmetsAnnounced.add(key);
         this.emit('titanfall2.guide', `附近有一个还没拿到的铁驭头盔收集品：在铁驭 ${whereText(r)}。`, 'piggyback');
+      }
+    }
+
+    if (p && bt && bt.alive && !bt.doomed && pct(bt.hp, bt.hpMax) < 50) {
+      const nearest = (cur.pois ?? [])
+        .filter((x) => x.kind === 'battery')
+        .map((x) => ({ x, r: relative(p.pos, p.yaw, x.pos) }))
+        .sort((a, b) => a.r.meters - b.r.meters)[0];
+      if (nearest && nearest.r.meters <= BATTERY_NEAR_M && this.alertDue('battery')) {
+        this.emit('titanfall2.guide', `BT 生命 ${pct(bt.hp, bt.hpMax)}%,附近地上有泰坦电池：在铁驭 ${whereText(nearest.r)}。`, 'debounce');
+      }
+    }
+
+    const gun = p?.weapons.find((w) => w.name === p.active);
+    const prevGun = prev.player?.weapons.find((w) => w.name === gun?.name);
+    if (p && !p.titan && gun && prevGun && gun.clipMax > 0) {
+      const left = (w: typeof gun): number => w.clip + Math.max(0, w.stock);
+      if (left(gun) <= gun.clipMax && left(prevGun) > gun.clipMax && this.alertDue('ammo')) {
+        this.emit('titanfall2.alert', `铁驭手上的 ${weaponNameOf(gun, this.lookup)} 只剩 ${left(gun)} 发(弹匣 ${gun.clip},备弹 ${Math.max(0, gun.stock)})。`, 'debounce');
       }
     }
 
@@ -672,7 +720,9 @@ export class Titanfall2World implements World {
   private poiText(frame: Frame, poi: PoiFrame): string {
     const p = frame.player!;
     const where = whereText(relative(p.pos, p.yaw, poi.pos));
-    return poi.kind === 'helmet' ? `铁驭头盔 ${where}` : `BT 装备 ${LOADOUT_NAMES[poi.weapon ?? ''] ?? poi.weapon} ${where}`;
+    if (poi.kind === 'helmet') return `铁驭头盔 ${where}`;
+    if (poi.kind === 'battery') return `泰坦电池 ${where}`;
+    return `BT 装备 ${LOADOUT_NAMES[poi.weapon ?? ''] ?? poi.weapon} ${where}`;
   }
 
   private async toolGuide(): Promise<string> {
@@ -683,10 +733,12 @@ export class Titanfall2World implements World {
     const pois = [...(frame.pois ?? [])].sort((a, b) => dist(a) - dist(b));
     const helmets = pois.filter((x) => x.kind === 'helmet');
     const loadouts = pois.filter((x) => x.kind === 'loadout');
+    const batteries = pois.filter((x) => x.kind === 'battery');
     const lines = [`关卡:${mapName(frame.map)}`, objectiveLine(frame, this.objective)];
     if (frame.bt && !frame.bt.embarked) lines.push(`BT 在铁驭 ${whereText(relative(p.pos, p.yaw, frame.bt.pos))}`);
     lines.push(helmets.length ? `这一关还没拿到的铁驭头盔 ${helmets.length} 个:\n${helmets.map((x) => `- ${this.poiText(frame, x)}`).join('\n')}` : '这一关没有还没拿到的铁驭头盔。');
     if (loadouts.length) lines.push(`可拾取的 BT 装备:\n${loadouts.map((x) => `- ${this.poiText(frame, x)}`).join('\n')}`);
+    if (batteries.length) lines.push(`地上的泰坦电池(给 BT 补生命):\n${batteries.slice(0, 5).map((x) => `- ${this.poiText(frame, x)}`).join('\n')}`);
     return lines.join('\n');
   }
 

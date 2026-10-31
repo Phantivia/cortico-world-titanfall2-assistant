@@ -45,10 +45,12 @@ Owner: `src/definition.ts`
 5. 用 `NorthstarLauncher.exe -allowlocalhttp <launchArgs> +cortico_tf2_port <port>` 启动游戏，窗口出现后恢复并切到前台。游戏停在主菜单，玩家选「继续」或「任务选择」进入战役。
 
 几点说明：
-- `launchArgs` 默认 `-noOriginStartup -novid`。Northstar 默认去找 Origin,本机只有 EA App 时会报「failed reading Origin path」。
+- `launchArgs` 默认 `-noOriginStartup -novid +sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1`:
+  - Northstar 默认去找 Origin,本机只有 EA App 时会报「failed reading Origin path」,所以加 `-noOriginStartup`。
+  - 单人战役默认在游戏窗口失去焦点时暂停、降帧、静音。后三项让玩家在桌宠里打字时游戏照常运行，BT 仍能出手和说话;玩家离开窗口时游戏也不会停。`sound_without_focus` 是存进游戏设置的项。
 - EA App 没登录完游戏就会弹出 `#ORIGIN_LOGGED_OUT`,点确定后退出;游戏在启动 90 秒内没进关卡就退出时，面板写明这个原因。
 - BT 语音不随 World 启动：一键开始或有关卡连上时才启动，World 开着不玩游戏时不占显存。
-- 单人战役在游戏窗口失去焦点时会暂停，暂停期间模组不上报;停止上报超过 10 秒，World 会推一条状态事件。
+- 暂停菜单、读图和过场时模组不上报;停止上报超过 10 秒，World 会推一条状态事件。
 
 ## 工具
 
@@ -133,9 +135,11 @@ Owner: `src/definition.ts`
 - 繁中版游戏的中文字体只有繁体字，所以 `subtitle.traditional` 开着时字幕先转成繁体。
 
 字幕的节奏：
-- 一句话按 `subtitle.charsPerLine` 折行，两行一页。
+- 一句话按 `subtitle.charsPerLine` 折行。第一页只放一行，合成快、开口早;之后两行一页，在前一页播放时合成。
 - 每页在它的语音开始播放时上屏，停留到语音结束。
 - 语音没就绪时只出字幕。
+- `titanfall2_say` 在第一页出声时返回。Cortico 按顺序执行同一次回复里的工具调用，所以紧跟在它后面的调用(比如桌宠气泡)和 BT 开口同时发生。
+- 游戏暂停或读图时字幕送不进去，声音照样播出;回执写明这句已经说出口，免得 Coo 重说。
 
 ## 开发
 

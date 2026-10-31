@@ -11,8 +11,9 @@ describe('subtitle wrapping', () => {
     expect(lines[0]).toBe('前方有敌人，');
   });
 
-  it('puts the speaker on the first line and at most two lines on a page', () => {
+  it('puts the speaker alone on a one-line first page and at most two lines on later pages', () => {
     const out = pages('a'.repeat(100), 20);
+    expect(out[0]).toHaveLength(1);
     expect(out[0][0].startsWith(SPEAKER)).toBe(true);
     for (const p of out) expect(p.length).toBeLessThanOrEqual(2);
   });

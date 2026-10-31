@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- 默认启动参数加 `+sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1`:在桌宠里打字时游戏不再暂停，BT 照常出手和说话。
+- BT 的声音已经播出、只是字幕没送进游戏(暂停、读图)时，`titanfall2_say` 回执写明这句已经说出口，不再报失败引得 Coo 重说。
+- 第一页字幕只放一行，BT 开口更快。
+- `titanfall2_say` 的说明写明同一次回复里排在它后面的调用在 BT 开口时执行，桌宠气泡可以借此与游戏频道同步。
+
 ## 0.2.0
 
 - 一键开始：快速启动页签的主按钮和新工具 `titanfall2_launch` 走同一套流程，缺 Northstar 时下载 v1.31.14 安装，装好模组，EA App 没开先启动并等它登录，启动 BT 语音，打开游戏并切到前台。

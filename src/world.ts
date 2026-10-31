@@ -826,6 +826,7 @@ export class Titanfall2World implements World {
     if (!this.link.client) throw new Error('游戏没有连上，字幕和声音都没有出。');
     if (a.interrupt === true) await this.speech!.hush();
     const r = await this.speech!.say(text);
+    if (!r.shown && r.voiced) return 'BT 的声音已经播出，这句已经说出口;字幕没上屏，游戏这时没在接收字幕(暂停、读图或过场)。';
     if (!r.shown) throw new Error(r.problem ?? '字幕没有显示');
     const voice = r.voiced ? 'BT 的声音已经开始播放' : this.cfg.voice.enabled ? `只出了字幕(${r.problem ?? this.voiceText()})` : '只出了字幕(语音已关闭)';
     return `字幕已上屏，${voice}。`;

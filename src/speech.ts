@@ -51,11 +51,15 @@ export function wrap(text: string, perLine: number): string[] {
   return lines;
 }
 
-/** Sentence-sized pages of at most PAGE_LINES lines; the first line of the first page carries the speaker. */
+/**
+ * Subtitle pages: the first is one line, so its audio is short to synthesize and BT starts speaking
+ * sooner; the rest hold PAGE_LINES lines and are synthesized while earlier pages play. The first line
+ * carries the speaker.
+ */
 export function pages(text: string, perLine: number): string[][] {
   const lines = wrap(`${SPEAKER}${text}`, perLine);
-  const out: string[][] = [];
-  for (let i = 0; i < lines.length; i += PAGE_LINES) out.push(lines.slice(i, i + PAGE_LINES));
+  const out: string[][] = [lines.slice(0, 1)];
+  for (let i = 1; i < lines.length; i += PAGE_LINES) out.push(lines.slice(i, i + PAGE_LINES));
   return out;
 }
 

@@ -9,7 +9,10 @@ export interface Titanfall2ConfigSection extends WorldSection {
   gameDir: string;
   /** Loopback port of the sidecar; the World passes it to the game it launches. */
   port: number;
-  /** Arguments added to NorthstarLauncher.exe after `-allowlocalhttp`. */
+  /**
+   * Arguments added to NorthstarLauncher.exe after `-allowlocalhttp`. The defaults keep the campaign running
+   * and audible while another window, such as the pet, has focus, so BT can act and speak while the player types.
+   */
   launchArgs: string;
   intel: {
     /** Least time between two state snapshots in the context. */
@@ -87,7 +90,7 @@ export const TITANFALL2_DEFAULTS: Titanfall2ConfigSection = {
   enabled: false,
   gameDir: '',
   port: 27941,
-  launchArgs: '-noOriginStartup -novid',
+  launchArgs: '-noOriginStartup -novid +sp_not_focus_pause 0 +not_focus_sleep 0 +sound_without_focus 1',
   intel: { snapshotSec: 20, maxListed: 6, alertCooldownSec: 20, lowHealthPct: 35 },
   support: { missileCount: 6, autoMissileCooldownSec: 15, smokeCooldownSec: 20, pulseCooldownSec: 12, markCooldownSec: 5, markSec: 10 },
   story: { enabled: true, language: 'tchinese', simplified: true, frameSec: 30, frameMaxPx: 1280 },

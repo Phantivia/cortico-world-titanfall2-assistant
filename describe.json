@@ -30,7 +30,7 @@
     },
     {
       "name": "titanfall2_say",
-      "description": "以 BT 的身份对铁驭说话：游戏里出 BT 的字幕，同时用 BT 的声音念出来。text 是要说的话，排在 BT 还没说完的话后面;返回时第一句已经出声、字幕已经上屏。interrupt 为 true 时先打断 BT 正在说的和排着的话。",
+      "description": "以 BT 的身份对铁驭说话：游戏里出 BT 的字幕，同时用 BT 的声音念出来。text 是要说的话，排在 BT 还没说完的话后面;返回时第一句已经出声、字幕已经上屏。interrupt 为 true 时先打断 BT 正在说的和排着的话。同一次回复里排在它后面的调用等它返回才执行，也就是在这句话出声的那一刻;要在别处同时显示这句话，把那个调用放在同一次回复里、紧跟在它后面。",
       "parameters": {
         "type": "object",
         "properties": {

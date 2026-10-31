@@ -10,7 +10,9 @@
 
 global function CorticoTF2_ServerInit
 
-const float TICK_SEC = 0.25
+// Northstar can run an HTTP reply callback in the middle of other server script, such as an entity spawn callback,
+// which corrupts that script; each post is one such callback, so the server posts once a second.
+const float TICK_SEC = 1.0
 const float REQUEST_STALE_SEC = 5.0
 const float SCAN_RADIUS = 8000.0
 const int MAX_ENEMIES = 48
@@ -20,7 +22,7 @@ const float MISSILE_SPEED = 1000.0
 const float MISSILE_HOMING = 300.0
 const float MISSILE_GAP_SEC = 0.12
 const float THREAT_RADIUS = 600.0
-const int BATTERY_SCAN_TICKS = 8
+const int BATTERY_SCAN_TICKS = 2
 const string HELMET_EDITOR_CLASS = "script_collectible"
 // titan weapons whose loadout BT can pick up in the campaign
 const array<string> LOADOUT_WEAPONS = [ "mp_titanweapon_xo16_shorty", "mp_titanweapon_sticky_40mm", "mp_titanweapon_meteor", "mp_titanweapon_leadwall", "mp_titanweapon_rocketeer_rocketstream", "mp_titanweapon_particle_accelerator", "mp_titanweapon_sniper", "mp_titanweapon_predator_cannon" ]

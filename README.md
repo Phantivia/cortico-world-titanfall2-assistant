@@ -12,7 +12,7 @@ Owner: `src/definition.ts`
 
 ```
 游戏(Northstar + 本包的模组 mod/Cortico.Titanfall2Assistant)
-  ├─ 服务端 VM  每 0.25 秒 POST /server:铁驭、BT、敌人、目标、段落、收集品、事件、指令回执 ← 回包带 BT 支援指令
+  ├─ 服务端 VM  每 1 秒 POST /server:铁驭、BT、敌人、目标、段落、收集品、事件、指令回执 ← 回包带 BT 支援指令
   └─ 客户端 VM  每 0.15 秒 POST /client:当前目标文字、刚播放的台词、本地化结果   ← 回包带字幕、待本地化的词
         ↕ 127.0.0.1:27941
 引擎子进程(sidecar,src/sidecar.ts;截游戏画面也在这里)  ↔ fork IPC ↔  Titanfall2World(src/world.ts)

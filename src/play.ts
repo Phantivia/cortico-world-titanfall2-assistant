@@ -1,7 +1,9 @@
 /**
- * One-click start: from "the World is on" to "the game is open in front", in order — the game folder,
- * Northstar, the mod, the EA app, BT's voice, the game and its window. The panel's start button and
- * the launch tool both run it; a second request while one runs joins it.
+ * Getting from "the World is on" to "the game is open in front", in two parts:
+ * - prepare (一键准备): the game folder, Northstar, the mod, the display settings, and BT's voice files if missing;
+ * - launch (启动游戏): the EA app, BT's voice, the game and its window. Launching needs Northstar in place; it
+ *   brings the mod up to date itself.
+ * The panel has a button for each; the launch tool runs both. One run at a time: a request while one runs joins it.
  *
  * The EA app gives no signal that its sign-in finished. When the World starts it, the game is launched
  * a fixed while after the app's LSX port opens (a fallback for that missing signal); a game that
@@ -11,7 +13,7 @@ import type { Logger } from 'cortico/core/types.ts';
 import type { Progress } from './download.ts';
 import { checkGame, eaAppPath, eaAppRunning, eaLsxListening, installMod, installNorthstar, launchGame, runningGame, startEaApp, vanillaGame } from './game.ts';
 
-export type PlayStep = 'idle' | 'northstar' | 'mod' | 'ea' | 'launch' | 'menu' | 'playing' | 'error';
+export type PlayStep = 'idle' | 'northstar' | 'mod' | 'prepared' | 'ea' | 'launch' | 'menu' | 'playing' | 'error';
 
 export interface PlayState {
   step: PlayStep;
@@ -32,6 +34,8 @@ export interface PlayDeps {
   port: () => number;
   /** Starts BT's voice without waiting for it. */
   startVoice: () => void;
+  /** Starts downloading BT's voice files when the voice is on and some are missing; returns what it did, for people, or null. */
+  downloadVoice: () => string | null;
   /** Restores and fronts the game window; false while it has none. */
   focus: () => Promise<boolean>;
   /** The mod in a level is posting to the sidecar. */
@@ -48,7 +52,8 @@ const WATCH_MS = 2000;
 
 export const MENU_HINT = '游戏已打开：在主菜单选「继续」或「任务选择」进入战役。';
 /** Said when Titanfall2.exe runs without Northstar, where the mod never loads. */
-export const VANILLA_TEXT = '从 Steam 启动的是原版，请用一键开始：先关掉游戏，再点一键开始。';
+export const VANILLA_TEXT = '从 Steam 启动的是原版，请用「启动游戏」:先关掉游戏，再点「启动游戏」。';
+const NOT_PREPARED = '游戏里还没装 Northstar:先点「一键准备」。';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -60,9 +65,29 @@ export class Play {
 
   constructor(private readonly deps: PlayDeps) {}
 
-  /** Resolves once the game window is in front (or the run failed) with the state then. */
+  /** 一键准备: resolves once Northstar, the mod and the display settings are in place (voice files may still be downloading). */
+  prepare(): Promise<PlayState> {
+    return this.once(async () => {
+      await this.doPrepare();
+      return this.state;
+    });
+  }
+
+  /** 启动游戏: resolves once the game window is in front (or the run failed) with the state then. */
+  launch(): Promise<PlayState> {
+    return this.once(() => this.doLaunch());
+  }
+
+  /** Both, for the launch tool. */
   run(): Promise<PlayState> {
-    this.running ??= this.doRun()
+    return this.once(async () => {
+      if (!(await runningGame()).length) await this.doPrepare();
+      return this.doLaunch();
+    });
+  }
+
+  private once(work: () => Promise<PlayState>): Promise<PlayState> {
+    this.running ??= work()
       .catch((err: unknown) => this.set('error', err instanceof Error ? err.message : String(err)))
       .finally(() => {
         this.running = null;
@@ -86,10 +111,31 @@ export class Play {
     return this.state;
   }
 
-  private async doRun(): Promise<PlayState> {
-    const d = this.deps;
-    const dir = await d.gameDir();
+  private async gameFolder(): Promise<string> {
+    const dir = await this.deps.gameDir();
     if (!dir) throw new Error('没找到泰坦陨落 2:Steam 里装的会自动找到，装在别处的在「游戏目录」里填写。');
+    if (!checkGame(dir).game) throw new Error(`${dir} 里没有 Titanfall2.exe。`);
+    return dir;
+  }
+
+  private async doPrepare(): Promise<void> {
+    const d = this.deps;
+    const dir = await this.gameFolder();
+    if (!checkGame(dir).northstar) {
+      this.set('northstar', '正在下载并安装 Northstar。');
+      await installNorthstar(dir, d.workDir, (p) => this.set('northstar', '正在下载并安装 Northstar。', p));
+      d.log.info('Northstar 已装进游戏', { dir });
+    }
+    this.set('mod', '正在安装模组。');
+    installMod(dir);
+    const display = await d.applyDisplay().catch((err: unknown) => `写显示设置失败:${err instanceof Error ? err.message : String(err)}`);
+    const voice = d.downloadVoice();
+    this.set('prepared', ['准备好了：Northstar 和模组已装好', `显示设置：${display}`, voice].filter(Boolean).join('。') + '。可以点「启动游戏」。');
+  }
+
+  private async doLaunch(): Promise<PlayState> {
+    const d = this.deps;
+    const dir = await this.gameFolder();
 
     if ((await runningGame()).length) {
       if ((await vanillaGame()).length) throw new Error(VANILLA_TEXT);
@@ -98,25 +144,18 @@ export class Play {
       return d.linked() ? this.set('playing', '游戏已连上。') : this.set('menu', MENU_HINT);
     }
 
-    let check = checkGame(dir);
-    if (!check.game) throw new Error(`${dir} 里没有 Titanfall2.exe。`);
-    if (!check.northstar) {
-      this.set('northstar', '正在下载并安装 Northstar。');
-      check = await installNorthstar(dir, d.workDir, (p) => this.set('northstar', '正在下载并安装 Northstar。', p));
-      d.log.info('Northstar 已装进游戏', { dir });
-    }
-
-    this.set('mod', '正在安装模组。');
-    installMod(dir);
+    const check = checkGame(dir);
+    if (!check.northstar) throw new Error(NOT_PREPARED);
+    if (!check.modCurrent || !check.localHttp || !check.dialogueHook) installMod(dir);
 
     const ea = await eaAppPath();
-    if (!ea) throw new Error('没装 EA App:Steam 版泰坦陨落 2 通过 EA App 登录，装好并登录后再开始。');
+    if (!ea) throw new Error('没装 EA App:Steam 版泰坦陨落 2 通过 EA App 登录，装好并登录后再点「启动游戏」。');
     if (!(await eaAppRunning())) {
       this.set('ea', '正在启动 EA App,等它登录。');
       startEaApp(ea);
       const deadline = Date.now() + EA_PORT_WAIT_MS;
       while (!(await eaLsxListening())) {
-        if (Date.now() > deadline) throw new Error('EA App 启动后两分钟还没就绪。打开 EA App 确认已登录，再开始一次。');
+        if (Date.now() > deadline) throw new Error('EA App 启动后两分钟还没就绪。打开 EA App 确认已登录，再点「启动游戏」。');
         await sleep(1000);
       }
       await sleep(EA_SIGN_IN_WAIT_MS);
@@ -157,6 +196,6 @@ export class Play {
 
   private exitText(): string {
     const sec = Math.round((Date.now() - this.launchedAt) / 1000);
-    return `游戏启动 ${sec} 秒后退出了，没进关卡。EA App 没登录时游戏会弹出 #ORIGIN_LOGGED_OUT,点确定后退出：确认 EA App 已登录后再开始一次。`;
+    return `游戏启动 ${sec} 秒后退出了，没进关卡。EA App 没登录时游戏会弹出 #ORIGIN_LOGGED_OUT,点确定后退出：确认 EA App 已登录后再点「启动游戏」。`;
   }
 }

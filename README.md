@@ -22,14 +22,14 @@ npm 包名 `cortico-world-titanfall2-assistant` · Owner: `src/definition.ts`
 1. 打开 Coopanion 的设置窗口，左栏「World 扩展」→「手动安装」→「从 npm 安装」,包名填 `cortico-world-titanfall2-assistant`,点「安装」。
 2. 装好后左栏「World 扩展」下面会出现「泰坦陨落2 神经链接」,把它启用。
 3. 进入这一页的「快速启动」页签，检查第一行：游戏目录有没有找到(Steam 里装的会自动找到，别处的在「游戏目录与模组」里粘贴路径后按回车)、EA App 装了没有。
-4. 「BT 语音」里如果写着还缺文件，点「下载语音组件」。默认引擎 GPT-SoVITS 有 N 卡时约 6 GB、没有约 2.5 GB,优先从魔搭下载;另一个引擎 VoxCPM2 约 5.6 GB,只能用 N 卡，从 GitHub 和 Hugging Face 下载。下载只做一次。
+4. 点「一键准备」(只要做一次):往游戏目录装 Northstar(约 107 MB)和模组，写好显示设置，并开始下载缺的 BT 语音组件。语音组件进度在「BT 语音」里，默认引擎 GPT-SoVITS 有 N 卡时约 6 GB、没有约 2.5 GB,优先从魔搭下载;另一个引擎 VoxCPM2 约 5.6 GB,只能用 N 卡，从 GitHub 和 Hugging Face 下载。语音组件没下完也能玩，BT 先只出字幕。
 
 用 Cortico 命令行部署的：`pnpm add cortico-world-titanfall2-assistant`(在扩展目录)，再在配置里启用 `worlds.titanfall2`。
 
 ## 使用
 
 1. 先打开 EA App 并登录。
-2. 在「快速启动」页签点「一键开始」,或者直接跟 Coo 说「打开泰坦陨落」。它会依次：缺 Northstar 就下载安装(约 107 MB,只有第一次)、装好模组、启动 BT 语音、写好显示设置、启动游戏并切到前台。
+2. 在「快速启动」页签点「启动游戏」,或者直接跟 Coo 说「打开泰坦陨落」。它会启动 BT 语音、写好显示设置、启动游戏并切到前台。跟 Coo 说的话，没做过一键准备也会先替你准备好。
 3. 第一次进主菜单，Northstar 会问要不要用 EA 令牌登录它的主服务器：单人战役用不到，选「否」。
 4. 在主菜单选「战役」→「继续」或「选择任务」进入关卡。进了关卡，面板上会显示「已连上」,BT 就开始工作了。
 5. 正常玩就行。有事直接跟 Coo 说，比如「打那台泰坦」「放烟幕」「下一个目标在哪」。
@@ -43,13 +43,13 @@ npm 包名 `cortico-world-titanfall2-assistant` · Owner: `src/definition.ts`
 
 ## 注意事项
 
-- **一定用「一键开始」(或让 Coo)启动游戏。** 从 Steam 或 EA App 直接点开始游戏，启动的是不带 Northstar 的原版，Coo 收不到游戏里的任何情况;面板会提示「从 Steam 启动的是原版，请用一键开始」,关掉游戏再点一键开始即可。
-- **游戏弹出 `#ORIGIN_LOGGED_OUT` 然后退出**:EA App 还没登录完。等 EA App 登录好再点一键开始。
+- **一定用「启动游戏」(或让 Coo)启动游戏。** 从 Steam 或 EA App 直接点开始游戏，启动的是不带 Northstar 的原版，Coo 收不到游戏里的任何情况;面板会提示「从 Steam 启动的是原版」,关掉游戏再点「启动游戏」即可。
+- **游戏弹出 `#ORIGIN_LOGGED_OUT` 然后退出**:EA App 还没登录完。等 EA App 登录好再点「启动游戏」。
 - **游戏弹出「There was a problem processing game logic」回到主菜单**:已知问题，多见于第 7 章开场炸墙一次刷出大量敌人时。原因是 Northstar 的网络回调和游戏生成敌人的脚本撞在一起;扩展已经尽量减少这种情况，但不能完全避免。遇到了点「继续」重进即可。
 - **GPT-SoVITS 和 VoxCPM2 怎么选**:游戏和语音合成抢同一块显卡，实测游戏运行时 GPT-SoVITS 一句可能要十几秒，VoxCPM2 两三秒;有 N 卡的话 VoxCPM2 跟得更紧。没有 N 卡只能用 GPT-SoVITS(CPU 档),BT 会说得比较慢。
 - **BT 的声音只在本机合成**,参考样片从你自己的游戏里现场截取，不随扩展分发。默认样片取自繁体中文(国语配音)语音包;游戏是别的语言时，到「配置」页签把「样片语言」改成游戏的语言(如 `english`),并把「样片台词」和「样片文字」换成那个语言里的一句 BT 台词及其逐字稿。
 - **字幕显示为繁体**:繁体中文版游戏的字体里没有简体字。英文版游戏可以在「配置」里关掉「字幕用繁体」。
-- **会改动游戏目录和设置**:往游戏目录装 Northstar 和模组(删掉 `NorthstarLauncher.exe`、`NorthstarLauncher.pdb`、`r2ds.bat`、`ns_startup_args*.txt`、`R2Northstar\`、`bin\x64_dedi\` 和 `bin\x64_retail\wsock32.*` 就回到原版);一键开始前按「画面与切窗」改写游戏的显示设置(「显示模式」选「保持游戏里的设置」则不改)。
+- **会改动游戏目录和设置**:往游戏目录装 Northstar 和模组(删掉 `NorthstarLauncher.exe`、`NorthstarLauncher.pdb`、`r2ds.bat`、`ns_startup_args*.txt`、`R2Northstar\`、`bin\x64_dedi\` 和 `bin\x64_retail\wsock32.*` 就回到原版);一键准备和启动游戏前按「画面与切窗」改写游戏的显示设置(「显示模式」选「保持游戏里的设置」则不改)。
 - **剧情画面会发给模型**:对话模型能看图时，剧情台词会附一张当时的游戏截图，按模型的用量计费。
 - 只支持单人战役，不支持多人模式。
 
@@ -67,7 +67,7 @@ npm 包名 `cortico-world-titanfall2-assistant` · Owner: `src/definition.ts`
 
 - Windows,Node.js 22+。
 - 自备泰坦陨落 2,装好并登录 EA App(Steam 版也通过它登录)。
-- [Northstar](https://github.com/R2Northstar/Northstar/releases):没装时一键开始会下载 v1.31.14 装进游戏目录。
+- [Northstar](https://github.com/R2Northstar/Northstar/releases):没装时「一键准备」会下载 v1.31.14 装进游戏目录。
 - BT 语音的运行时和模型，缺了在面板上下载。两种引擎(配置 `voice.engine`):
   - GPT-SoVITS(默认):NVIDIA 显卡用 V5 turbo,没有就用 CPU 跑 v2ProPlus(配置 `voice.sovitsTier`)。运行时与权重和 cortico-world-gpt-sovits-for-coopanion 用同一套钉住的文件、同一个目录(`<运行时根>/gpt-sovits/`、`<模型根>/gpt-sovits/`),两个扩展共用;先从魔搭下载，下不动再走 GitHub / Hugging Face。显卡档约 6 GB,CPU 档约 2.5 GB。
   - VoxCPM2:只能用 NVIDIA 显卡。llama.cpp-omni 运行时在 `<运行时根>/llama.cpp-omni/`,模型在 `<模型根>/vtuber/`,和 vtuber 扩展共用，约 5.6 GB。
@@ -82,7 +82,7 @@ npm 包名 `cortico-world-titanfall2-assistant` · Owner: `src/definition.ts`
 3. 从游戏自己的 VPK 读出 `sp/sh_sp_dialogue.gnut`,在台词播放处插入上报钩子，写进模组目录作覆盖文件。见下文「剧情」。
 4. 在 `127.0.0.1:<port>` 起 sidecar。
 
-开始玩用「快速启动」页签的「一键开始」,或让 Coo 打开游戏(`titanfall2_launch`),两者走同一套流程(`src/play.ts`):
+「快速启动」页签有两个按钮(`src/play.ts`):「一键准备」做下面的 1、2、5 步并开始下载缺的语音组件;「启动游戏」做 3–6 步(没装 Northstar 时提示先一键准备，模组过期就顺手更新)。让 Coo 打开游戏(`titanfall2_launch`)时两步都做:
 
 1. 游戏目录里没有 Northstar 时，下载 v1.31.14 解到游戏目录。
 2. 安装或更新模组。
@@ -103,8 +103,8 @@ npm 包名 `cortico-world-titanfall2-assistant` · Owner: `src/definition.ts`
 几点说明：
 - EA App 没登录完游戏就会弹出 `#ORIGIN_LOGGED_OUT`,点确定后退出;游戏在启动 90 秒内没进关卡就退出时，面板写明这个原因。
 - Northstar 第一次进主菜单会问要不要用 EA 令牌登录它的主服务器(`profile.cfg` 的 `ns_has_agreed_to_send_token` 为 0 时)。单人用不到，选「否」;问之前面板上一直有这条提示。
-- 从 Steam 或 EA App 直接启动的是原版(`Titanfall2.exe` 里没有 `Northstar.dll`),模组不会加载。World 连续两次检查到这种进程就推一条状态事件给 Coo,面板写「从 Steam 启动的是原版，请用一键开始」;这时点一键开始也给同样的提示。
-- BT 语音不随 World 启动：一键开始或有关卡连上时才启动，World 开着不玩游戏时不占显存。
+- 从 Steam 或 EA App 直接启动的是原版(`Titanfall2.exe` 里没有 `Northstar.dll`),模组不会加载。World 连续两次检查到这种进程就推一条状态事件给 Coo,面板写「从 Steam 启动的是原版，请用「启动游戏」」;这时点「启动游戏」也给同样的提示。
+- BT 语音不随 World 启动：点「启动游戏」或有关卡连上时才启动，World 开着不玩游戏时不占显存。
 - 暂停菜单、读图和过场时模组不上报;停止上报超过 10 秒，World 会推一条状态事件。
 
 ### 工具
@@ -120,7 +120,7 @@ npm 包名 `cortico-world-titanfall2-assistant` · Owner: `src/definition.ts`
 | `titanfall2_pulse` | 以铁驭为中心放声纳脉冲，回执列出照到的敌人 |
 | `titanfall2_mark` | 把指定敌人对铁驭隔墙描边高亮 `support.markSec` 秒 |
 | `titanfall2_focus` | 铁驭步行时让 BT 把指定敌人当攻击目标 |
-| `titanfall2_launch` | 一键开始：按需装 Northstar 与模组、启动 EA App 和 BT 语音，打开游戏并切到前台 |
+| `titanfall2_launch` | 一键准备加启动游戏：按需装 Northstar 与模组、启动 EA App 和 BT 语音，打开游戏并切到前台 |
 
 几项约定：
 - 方位以铁驭视线为 12 点钟;距离按 1 米 = 39.37 游戏单位换算。

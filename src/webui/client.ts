@@ -1,5 +1,5 @@
 /**
- * WebUI panels: `start` (快速启动), the one-click start, the game folder and its Northstar/mod state, and BT's
+ * WebUI panels: `start` (快速启动), preparing (一键准备) and launching (启动游戏) the game, the game folder and its Northstar/mod state, and BT's
  * voice with the download of its runtime and weights; `display` (画面与切窗), the display mode, resolution and
  * focus behavior the World sets before launching the game. The browser side imports no Node module.
  */
@@ -34,7 +34,7 @@ const filesReady = (f: VoiceFiles | null): boolean => !!f && (f.external || f.do
 const ENGINES: readonly VoiceEngineId[] = ['gpt-sovits', 'voxcpm2'];
 const VERSION_NAMES: Record<string, string> = { v5turbo: 'V5 turbo', v2ProPlus: 'v2ProPlus' };
 
-type PlayStep = 'idle' | 'northstar' | 'mod' | 'ea' | 'launch' | 'menu' | 'playing' | 'error';
+type PlayStep = 'idle' | 'northstar' | 'mod' | 'prepared' | 'ea' | 'launch' | 'menu' | 'playing' | 'error';
 
 interface StartState {
   gameDir: string;
@@ -68,11 +68,12 @@ const BUSY: readonly PlayStep[] = ['northstar', 'mod', 'ea', 'launch'];
 
 const TEXT = {
   zh: {
-    playTitle: '一键开始',
-    playDesc: '按顺序装好缺的 Northstar 和模组、启动 EA App 和 BT 语音，再打开游戏并切到前台。游戏停在主菜单后，选「继续」或「任务选择」进入战役。',
-    play: '一键开始',
-    playing: '正在准备…',
-    steps: { idle: '', northstar: '安装 Northstar', mod: '安装模组', ea: '启动 EA App', launch: '启动游戏', menu: '在主菜单', playing: '已连上', error: '没能开始' },
+    playTitle: '准备与启动',
+    playDesc: '第一次用先点「一键准备」:装好 Northstar 和模组、写好显示设置、下载缺的 BT 语音组件。之后每次玩点「启动游戏」:启动 EA App 和 BT 语音，打开游戏并切到前台;游戏停在主菜单后，选「继续」或「任务选择」进入战役。',
+    prepare: '一键准备',
+    play: '启动游戏',
+    playing: '进行中…',
+    steps: { idle: '', northstar: '安装 Northstar', mod: '安装模组', prepared: '已准备好', ea: '启动 EA App', launch: '启动游戏', menu: '在主菜单', playing: '已连上', error: '没能完成' },
     front: '切到游戏',
     ready: {
       folder: (dir: string | null) => (dir ? `游戏 ${dir}` : '没找到游戏目录'),
@@ -92,7 +93,7 @@ const TEXT = {
     status: (s: StartState) =>
       `${s.running.length ? '游戏在运行' : '游戏没在运行'} · ${s.link.server ? `已连上${s.map ? `,${s.map}` : ''}` : '没有关卡在上报'}${s.objective ? ` · ${s.objective}` : ''}`,
     gameTitle: '游戏目录与模组',
-    gameDesc: 'Steam 里的 Titanfall2 会自动找到;装在别处的粘贴目录后按回车。模组随 World 启动和一键开始自动更新。',
+    gameDesc: 'Steam 里的 Titanfall2 会自动找到;装在别处的粘贴目录后按回车。模组在 World 启动、一键准备和启动游戏时自动更新。',
     dirPlaceholder: '留空自动查找',
     detect: '自动查找',
     install: '安装/更新模组',
@@ -101,7 +102,7 @@ const TEXT = {
     no: '没有',
     notFound: '没找到游戏目录',
     voiceTitle: 'BT 语音',
-    voiceDesc: '按游戏里截取的 BT 台词复刻声音，一键开始和进入关卡时自动启动。GPT-SoVITS 在 NVIDIA 显卡上用 V5 turbo,没有就用 CPU 跑 v2ProPlus,组件从魔搭下载;VoxCPM2 只能用 NVIDIA 显卡。',
+    voiceDesc: '按游戏里截取的 BT 台词复刻声音，启动游戏和进入关卡时自动启动。GPT-SoVITS 在 NVIDIA 显卡上用 V5 turbo,没有就用 CPU 跑 v2ProPlus,组件从魔搭下载;VoxCPM2 只能用 NVIDIA 显卡。',
     engines: { 'gpt-sovits': 'GPT-SoVITS', voxcpm2: 'VoxCPM2' } as Record<VoiceEngineId, string>,
     tier: (x: { tier: string; version: string }) => `${x.tier === 'cuda' ? '显卡档' : 'CPU 档'} · ${VERSION_NAMES[x.version] ?? x.version}`,
     voiceStart: '启动语音',
@@ -114,11 +115,12 @@ const TEXT = {
     done: '完成',
   },
   en: {
-    playTitle: 'One-click start',
-    playDesc: 'Installs Northstar and the mod if missing, starts the EA app and BT\'s voice, then opens the game in front. At the main menu, pick Continue or Mission Select.',
-    play: 'Start',
-    playing: 'Preparing…',
-    steps: { idle: '', northstar: 'Installing Northstar', mod: 'Installing mod', ea: 'Starting EA app', launch: 'Launching', menu: 'At main menu', playing: 'Connected', error: 'Did not start' },
+    playTitle: 'Prepare and launch',
+    playDesc: 'The first time, press Prepare: it installs Northstar and the mod, writes the display settings and downloads missing BT voice files. Then each time you play, press Launch game: it starts the EA app and BT\'s voice and opens the game in front; at the main menu, pick Continue or Mission Select.',
+    prepare: 'Prepare',
+    play: 'Launch game',
+    playing: 'Working…',
+    steps: { idle: '', northstar: 'Installing Northstar', mod: 'Installing mod', prepared: 'Prepared', ea: 'Starting EA app', launch: 'Launching', menu: 'At main menu', playing: 'Connected', error: 'Did not finish' },
     front: 'Show game',
     ready: {
       folder: (dir: string | null) => (dir ? `Game ${dir}` : 'No game folder found'),
@@ -138,7 +140,7 @@ const TEXT = {
     status: (s: StartState) =>
       `${s.running.length ? 'Game running' : 'Game not running'} · ${s.link.server ? `connected${s.map ? `, ${s.map}` : ''}` : 'no level reporting'}${s.objective ? ` · ${s.objective}` : ''}`,
     gameTitle: 'Game folder and mod',
-    gameDesc: 'The Steam copy is found on its own; for another folder, paste it and press Enter. The mod updates when the World starts and on one-click start.',
+    gameDesc: 'The Steam copy is found on its own; for another folder, paste it and press Enter. The mod updates when the World starts, on Prepare and on Launch game.',
     dirPlaceholder: 'Empty finds it',
     detect: 'Detect',
     install: 'Install/update mod',
@@ -147,7 +149,7 @@ const TEXT = {
     no: 'no',
     notFound: 'No game folder found',
     voiceTitle: 'BT voice',
-    voiceDesc: 'Clones BT from a line cut out of the game; starts on one-click start and when a level connects. GPT-SoVITS runs V5 turbo on NVIDIA GPUs and v2ProPlus on the CPU otherwise, downloaded from ModelScope; VoxCPM2 needs an NVIDIA GPU.',
+    voiceDesc: 'Clones BT from a line cut out of the game; starts on Launch game and when a level connects. GPT-SoVITS runs V5 turbo on NVIDIA GPUs and v2ProPlus on the CPU otherwise, downloaded from ModelScope; VoxCPM2 needs an NVIDIA GPU.',
     engines: { 'gpt-sovits': 'GPT-SoVITS', voxcpm2: 'VoxCPM2' } as Record<VoiceEngineId, string>,
     tier: (x: { tier: string; version: string }) => `${x.tier === 'cuda' ? 'GPU tier' : 'CPU tier'} · ${VERSION_NAMES[x.version] ?? x.version}`,
     voiceStart: 'Start voice',
@@ -171,10 +173,11 @@ const startPanel: WebUiPanel = {
     const readyLine = ui.msgline();
     const hintLine = ui.msgline();
     const playBar = ui.rowbar();
-    const playBtn = ui.button(t.play, { variant: 'primary', onClick: () => void play() });
-    const frontBtn = ui.button(t.front, { onClick: () => void play() });
+    const prepareBtn = ui.button(t.prepare, { onClick: () => void play('prepare') });
+    const playBtn = ui.button(t.play, { variant: 'primary', onClick: () => void play('launch') });
+    const frontBtn = ui.button(t.front, { onClick: () => void play('launch') });
     const stepSlot = ui.h('span');
-    playBar.append(stepSlot, ui.h('span', 'grow'), frontBtn, playBtn);
+    playBar.append(stepSlot, ui.h('span', 'grow'), frontBtn, prepareBtn, playBtn);
     const playProgress = ui.progress({ label: '' });
     const playLine = ui.msgline();
     const playErr = ui.msgline('', true);
@@ -230,12 +233,12 @@ const startPanel: WebUiPanel = {
       bar.setValue(p.total ? p.done : 0, p.total ?? 1);
     };
 
-    const play = async (): Promise<void> => {
+    const play = async (method: 'prepare' | 'launch'): Promise<void> => {
       playErr.textContent = '';
-      playBtn.disabled = true;
+      playBtn.disabled = prepareBtn.disabled = true;
       void load();
       try {
-        await ctx.invoke('play');
+        await ctx.invoke(method);
       } catch (e) {
         playErr.textContent = String(e instanceof Error ? e.message : e);
       }
@@ -270,8 +273,13 @@ const startPanel: WebUiPanel = {
       const s = await ctx.invoke<StartState>('state');
       const busy = s.play !== null && BUSY.includes(s.play.step);
       readyLine.textContent = [t.ready.folder(s.resolvedDir), t.ready.northstar(s.check, s.northstarVersion), t.ready.ea(s.eaApp), t.ready.voice(s.voice)].join(' · ');
-      playBtn.disabled = busy || !s.resolvedDir || s.running.length > 0;
-      playBtn.textContent = busy ? t.playing : t.play;
+      playBtn.disabled = busy || !s.resolvedDir || !s.check?.northstar || s.running.length > 0;
+      prepareBtn.disabled = busy || !s.resolvedDir || s.running.length > 0;
+      playBtn.textContent = busy && ['ea', 'launch'].includes(s.play!.step) ? t.playing : t.play;
+      prepareBtn.textContent = busy && ['northstar', 'mod'].includes(s.play!.step) ? t.playing : t.prepare;
+      // before the first preparation the next step is 一键准备
+      prepareBtn.classList.toggle('primary', !s.check?.northstar);
+      playBtn.classList.toggle('primary', !!s.check?.northstar);
       frontBtn.hidden = s.running.length === 0;
       frontBtn.disabled = busy;
       const step = s.play?.step ?? 'idle';
@@ -348,13 +356,13 @@ interface DisplayState {
 const DISPLAY_TEXT = {
   zh: {
     modeTitle: '显示模式',
-    modeDesc: '独占全屏会盖住桌宠;无边框窗口铺满屏幕，桌宠显示在游戏上面。一键开始时写进游戏设置，游戏开着时改，下次启动前写入。',
+    modeDesc: '独占全屏会盖住桌宠;无边框窗口铺满屏幕，桌宠显示在游戏上面。一键准备和启动游戏时写进游戏设置，游戏开着时改，下次启动前写入。',
     modes: { borderless: '无边框窗口', windowed: '窗口', fullscreen: '全屏', game: '保持游戏里的设置' } as Record<DisplayMode, string>,
     resolution: '分辨率',
     fitScreen: (s: DisplayState['screen']) => (s ? `跟随主屏(${s.width}×${s.height})` : '跟随主屏'),
     keepGame: '保持游戏里的大小',
-    current: (g: GameDisplay | null) => (g ? `游戏设置现在是 ${g.fullscreen ? '全屏' : g.borderless ? '无边框窗口' : '窗口'} ${g.width}×${g.height}` : '游戏还没有显示设置文件，一键开始时按上面的设置新建'),
-    pending: '一键开始时会改成上面的设置',
+    current: (g: GameDisplay | null) => (g ? `游戏设置现在是 ${g.fullscreen ? '全屏' : g.borderless ? '无边框窗口' : '窗口'} ${g.width}×${g.height}` : '游戏还没有显示设置文件，一键准备时按上面的设置新建'),
+    pending: '一键准备或启动游戏时会改成上面的设置',
     apply: '现在写入',
     running: '游戏开着，关掉后再写入',
     focusTitle: '切到别的窗口时',
@@ -369,13 +377,13 @@ const DISPLAY_TEXT = {
   },
   en: {
     modeTitle: 'Display mode',
-    modeDesc: 'Exclusive fullscreen hides the pet; a borderless window fills the screen with the pet on top. Written into the game\'s settings on one-click start; changed while the game runs, it is written before the next launch.',
+    modeDesc: 'Exclusive fullscreen hides the pet; a borderless window fills the screen with the pet on top. Written into the game\'s settings on Prepare and Launch game; changed while the game runs, it is written before the next launch.',
     modes: { borderless: 'Borderless window', windowed: 'Window', fullscreen: 'Fullscreen', game: 'Keep the game\'s setting' } as Record<DisplayMode, string>,
     resolution: 'Resolution',
     fitScreen: (s: DisplayState['screen']) => (s ? `Primary screen (${s.width}×${s.height})` : 'Primary screen'),
     keepGame: 'Keep the game\'s size',
-    current: (g: GameDisplay | null) => (g ? `The game is set to ${g.fullscreen ? 'fullscreen' : g.borderless ? 'borderless window' : 'window'} ${g.width}×${g.height}` : 'The game has no display settings file yet; one-click start creates it with the setting above'),
-    pending: 'One-click start changes it to the setting above',
+    current: (g: GameDisplay | null) => (g ? `The game is set to ${g.fullscreen ? 'fullscreen' : g.borderless ? 'borderless window' : 'window'} ${g.width}×${g.height}` : 'The game has no display settings file yet; Prepare creates it with the setting above'),
+    pending: 'Prepare or Launch game changes it to the setting above',
     apply: 'Write now',
     running: 'The game is open; close it to write',
     focusTitle: 'When another window has focus',

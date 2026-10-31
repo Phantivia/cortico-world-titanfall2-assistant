@@ -9,7 +9,7 @@
  * Campaign dialogue arrives through a hook the World patches into the game's dialogue script
  * (story.ts); it is queued and rendered at delivery with a game frame read at that moment.
  * BT's voice is VoxCPM2 cloned from a line cut out of the installed game (voice.ts); it starts when a
- * one-click start runs (play.ts) or a level links, so a World left on does not hold the GPU.
+ * the game is launched (play.ts) or a level links, so a World left on does not hold the GPU.
  */
 import { fork, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -247,6 +247,12 @@ export class Titanfall2World implements World {
       applyDisplay: () => this.applyDisplay(),
       port: () => this.cfg.port,
       startVoice: () => this.startVoice(),
+      downloadVoice: () => {
+        const files = this.voice?.files();
+        if (!this.cfg.voice.enabled || !this.voice || !files || files.external || files.downloadBytes === 0) return null;
+        this.voice.startDownload(() => this.startVoice());
+        return `BT 语音组件开始下载(约 ${(files.downloadBytes / 1e9).toFixed(1)} GB),进度在「BT 语音」里`;
+      },
       focus: () => this.call<boolean>({ op: 'focus' }).catch(() => false),
       linked: () => this.link.server,
       log,
@@ -682,7 +688,7 @@ export class Titanfall2World implements World {
       if (seen < 2 || this.vanillaTold.has(pid)) continue;
       this.vanillaTold.add(pid);
       this.log?.warn('游戏不是经 Northstar 启动的', { pid });
-      this.emit('titanfall2.state', '游戏是从 Steam 或 EA App 直接启动的原版，没有 Northstar:模组不会加载，这边收不到游戏里的任何情况，BT 也不能出手和说话。请玩家关掉游戏，用一键开始(或让你打开游戏)。', 'flush');
+      this.emit('titanfall2.state', '游戏是从 Steam 或 EA App 直接启动的原版，没有 Northstar:模组不会加载，这边收不到游戏里的任何情况，BT 也不能出手和说话。请玩家关掉游戏，在面板上点「启动游戏」(或让你打开游戏)。', 'flush');
     }
   }
 
@@ -1048,7 +1054,7 @@ export class Titanfall2World implements World {
       ],
       badges: this.map ? [{ label: en ? 'Level' : '关卡', value: mapName(this.map), tone: this.link.server ? 'on' : 'plain' }] : [],
       panels: [
-        { id: 'start', title: en ? 'Quick start' : '快速启动', description: en ? 'Start everything with one button; game folder, mod and BT\'s voice.' : '一键开始;游戏目录、模组和 BT 语音。' },
+        { id: 'start', title: en ? 'Quick start' : '快速启动', description: en ? 'Prepare and launch the game; game folder, mod and BT\'s voice.' : '一键准备、启动游戏;游戏目录、模组和 BT 语音。' },
         { id: 'display', title: en ? 'Display and focus' : '画面与切窗', description: en ? 'Display mode, resolution, and the game while another window has focus.' : '显示模式、分辨率，切到别的窗口时游戏怎么样。' },
       ],
       invoke: (panel, method, args) => this.invoke(panel, method, args),
@@ -1122,8 +1128,10 @@ export class Titanfall2World implements World {
         if (!dir) throw new Error('没找到游戏目录');
         return installMod(dir);
       }
-      case 'play':
-        return this.play?.run();
+      case 'prepare':
+        return this.play?.prepare();
+      case 'launch':
+        return this.play?.launch();
       case 'voice-start':
         await this.voice?.start();
         return { phase: this.voice?.phase };

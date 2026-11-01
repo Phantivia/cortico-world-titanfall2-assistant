@@ -160,7 +160,8 @@ export class Player {
     this.rt = null;
   }
 
-  private drain(): Promise<void> {
+  /** Resolves when everything written so far has played. */
+  drain(): Promise<void> {
     const left = this.endsAt - Date.now();
     return left > 0 ? new Promise((done) => setTimeout(done, left)) : Promise.resolve();
   }

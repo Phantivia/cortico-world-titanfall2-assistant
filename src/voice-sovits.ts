@@ -96,6 +96,35 @@ export class SovitsVoice implements VoiceEngine {
     return this.serial(() => this.collect(text, signal));
   }
 
+  /**
+   * The line's audio chunk by chunk as api_v2 streams it; holds the one pipeline until the line is done, so a
+   * line asked for while another plays starts synthesizing as soon as that one's audio is all in.
+   */
+  async *stream(text: string, signal?: AbortSignal): AsyncGenerator<Pcm> {
+    await this.start();
+    let release!: () => void;
+    const done = new Promise<void>((r) => (release = r));
+    let enter!: () => void;
+    const turn = new Promise<void>((r) => (enter = r));
+    this.queue = this.queue.then(() => {
+      enter();
+      return done;
+    });
+    await turn;
+    try {
+      const url = this.server.state().url;
+      if (!url) throw new Error('GPT-SoVITS 推理服务没在运行');
+      const gain = OUTPUT_GAIN[this.version()];
+      const req = { text, refAudio: this.opts.sampleFile, refText: this.opts.cfg().sampleText, speed: 1 };
+      for await (const c of synthesize(url, req, signal)) {
+        const pcm = withGain(c.pcm, gain);
+        yield { pcm, sampleRate: c.sampleRate, durationMs: Math.round((pcm.length / 2 / c.sampleRate) * 1000) };
+      }
+    } finally {
+      release();
+    }
+  }
+
   async refreshSample(): Promise<{ file: string; durationMs: number }> {
     await ensureSample(this.opts, true);
     return { file: this.opts.sampleFile, durationMs: decodeWav(readFileSync(this.opts.sampleFile)).durationMs };

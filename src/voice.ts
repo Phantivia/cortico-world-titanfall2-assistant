@@ -34,6 +34,11 @@ export interface VoiceEngine {
   start(): Promise<void>;
   stop(): void;
   synth(text: string, signal?: AbortSignal): Promise<Pcm>;
+  /**
+   * The line's audio as it is synthesized, for an engine whose first audio comes well before the whole line;
+   * absent when the engine only returns whole lines.
+   */
+  stream?(text: string, signal?: AbortSignal): AsyncIterable<Pcm>;
   /** Cuts the sample again from the game even when one is kept. */
   refreshSample(): Promise<{ file: string; durationMs: number }>;
 }

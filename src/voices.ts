@@ -67,6 +67,12 @@ export class Voices implements VoiceEngine {
     return this.current.synth(text, signal);
   }
 
+  /** The selected engine's streaming, when it has one (GPT-SoVITS). */
+  get stream(): ((text: string, signal?: AbortSignal) => AsyncIterable<Pcm>) | undefined {
+    const engine = this.current;
+    return engine.stream ? (text, signal) => engine.stream!(text, signal) : undefined;
+  }
+
   refreshSample(): Promise<{ file: string; durationMs: number }> {
     return this.current.refreshSample();
   }
